@@ -1,6 +1,7 @@
 """Yordamchi funksiyalar: sana, vaqt va matn bilan ishlash."""
 import html
 import logging
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from aiogram import F
 from aiogram.exceptions import TelegramBadRequest
 
-from app.emoji import CAL, CLOCK, PENCIL, PLUS, REPEAT, WARN
+from app.emoji import BOLT, CAL, CLOCK, PEOPLE, PENCIL, PLUS, REPEAT, WARN
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +27,27 @@ MENU_KEYWORDS = (
     "Eslatma yaratish",
     "Eslatmalarim",
     "Takroriy eslatma",
+    "Do'stga eslatma",
     "Sozlamalar",
     "Bekor qilish",
 )
 
 HELP_TEXT = (
-    f"{PLUS} <b>Eslatma yaratish</b> - matn, sana va vaqtni tanlaysiz.\n"
+    f"{BOLT} <b>Tez yozish</b> - bitta xabar yozing, eslatma tayyor:\n"
+    "<code>ertaga 9:00 dori ichish</code>\n"
+    "<code>30 daqiqadan keyin choy</code>\n"
+    "<code>har kuni 8 00 vitamin</code>\n"
+    "<code>juma 18:00 futbol</code>\n"
+    "Soatni <code>9</code>, <code>9 00</code>, <code>9:00</code> yoki "
+    "<code>soat 9 da</code> deb yozsangiz ham bo'ladi.\n\n"
+    f"{PLUS} <b>Eslatma yaratish</b> - matn, sana va vaqtni tugmalar bilan tanlaysiz.\n"
     f"{REPEAT} <b>Takroriy eslatma</b> - har kuni yoki har hafta.\n"
-    f"{CAL} <b>Maxsus sana va vaqt</b> - bir nechta sana-vaqtni "
-    f"bir yo'la yozish.\n"
+    f"{PEOPLE} <b>Do'stga eslatma</b> - havola orqali boshqa odamga eslatma yuborasiz.\n"
     f"{PENCIL} <b>Eslatmalarim</b> - ko'rish, tahrirlash, o'chirish.\n\n"
-    f"{CLOCK} Sana: <code>YYYY-MM-DD</code> (masalan 2026-11-05)\n"
-    f"{CLOCK} Vaqt: <code>HH:MM</code> (masalan 09:30)\n"
+    f"{CAL} Sana: <code>YYYY-MM-DD</code> (masalan 2026-11-05)\n"
+    f"{CLOCK} Vaqt: <code>09:30</code>, <code>9 30</code> yoki <code>9</code>\n"
     f"{WARN} Vaqt O'zbekiston vaqti (Asia/Tashkent) bo'yicha.\n\n"
-    f"Bekor qilish: /cancel"
+    "Bekor qilish: /cancel"
 )
 
 
@@ -94,12 +102,25 @@ def parse_date(text: str) -> Optional[date]:
         return None
 
 
+_TIME_SPLIT = re.compile(r"^(\d{1,2})(?:\s*[:.\-]\s*|\s+)(\d{2})$")
+
+
 def parse_time(text: str) -> Optional[time]:
-    value = text.strip().replace(".", ":")
-    try:
-        return datetime.strptime(value, "%H:%M").time()
-    except ValueError:
+    """Vaqtni erkin ko'rinishda o'qiydi: 9, 09, 9:00, 9.30, 9 00, 930, soat 9 da."""
+    value = text.strip().lower().replace("soat", " ")
+    value = re.sub(r"\s*(?:da|ga|larda|gacha)\s*$", "", value).strip()
+    match = _TIME_SPLIT.match(value)
+    if match:
+        hour, minute = int(match.group(1)), int(match.group(2))
+    elif value.isdigit() and len(value) <= 2:
+        hour, minute = int(value), 0
+    elif value.isdigit() and len(value) in (3, 4):
+        hour, minute = int(value[:-2]), int(value[-2:])
+    else:
         return None
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return time(hour, minute)
+    return None
 
 
 def local_to_utc(d: date, t: time, tz: ZoneInfo) -> datetime:
@@ -109,10 +130,10 @@ def local_to_utc(d: date, t: time, tz: ZoneInfo) -> datetime:
 def parse_datetime_line(line: str, tz: ZoneInfo) -> Optional[datetime]:
     """'2026-11-05 09:30' ko'rinishidagi qatorni UTC vaqtga aylantiradi."""
     parts = line.replace("T", " ").split()
-    if len(parts) != 2:
+    if len(parts) < 2:
         return None
     d = parse_date(parts[0])
-    t = parse_time(parts[1])
+    t = parse_time(" ".join(parts[1:]))
     if d is None or t is None:
         return None
     return local_to_utc(d, t, tz)

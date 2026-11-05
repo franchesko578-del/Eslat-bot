@@ -5,7 +5,10 @@ from app.handlers import (
     admin,
     create,
     fallback,
+    friend,
     manage,
+    quickwrite,
+    reminder_actions,
     settings_menu,
     start,
 )
@@ -17,7 +20,10 @@ def get_routers() -> list:
         start.router,
         admin.router,
         create.router,
+        friend.router,
         manage.router,
+        reminder_actions.router,
         settings_menu.router,
+        quickwrite.router,
         fallback.router,
     ]

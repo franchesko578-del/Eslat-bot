@@ -1,14 +1,15 @@
-"""Eslatma yaratish: matn -> takrorlanish -> sana -> vaqt."""
-from datetime import timedelta
+"""Eslatma yaratish: matn -> takrorlanish -> sana -> vaqt (tugma yoki yozib)."""
+from datetime import datetime, time, timedelta
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, User
 
 from app.config import Settings
 from app.db import Database, iso_z
 from app.emoji import CAL, MEMO, OK, REPEAT, WARN
-from app.keyboards import cancel_menu, date_kb, main_menu, repeat_kb
+from app.keyboards import cancel_menu, date_kb, main_menu, repeat_kb, time_kb
+from app.sharing import send_share_card
 from app.states import CreateReminder
 from app.utils import (
     PLAIN,
@@ -36,6 +37,7 @@ async def begin(
     db: Database,
     settings: Settings,
     recurring_only: bool,
+    friend: bool = False,
 ) -> None:
     await state.clear()
     active = await db.count_active(message.from_user.id)
@@ -48,10 +50,13 @@ async def begin(
         )
         return
     await state.set_state(CreateReminder.text)
-    await state.update_data(recurring_only=recurring_only)
-    await message.answer(
-        f"{MEMO} Eslatma matnini yozing:", reply_markup=cancel_menu()
+    await state.update_data(recurring_only=recurring_only, friend=friend)
+    prompt = (
+        f"{MEMO} Do'stingiz uchun eslatma matnini yozing:"
+        if friend
+        else f"{MEMO} Eslatma matnini yozing:"
     )
+    await message.answer(prompt, reply_markup=cancel_menu())
 
 
 @router.message(F.text.endswith("Eslatma yaratish"))
@@ -69,7 +74,9 @@ async def menu_recurring(
 
 
 @router.message(CreateReminder.text, PLAIN)
-async def got_text(message: Message, state: FSMContext) -> None:
+async def got_text(
+    message: Message, state: FSMContext, settings: Settings
+) -> None:
     text = message.text.strip()
     if len(text) > MAX_TEXT:
         await message.answer(
@@ -79,6 +86,11 @@ async def got_text(message: Message, state: FSMContext) -> None:
         return
     data = await state.get_data()
     await state.update_data(text=text)
+    if data.get("friend"):
+        await state.update_data(repeat="once")
+        await state.set_state(CreateReminder.date)
+        await prompt_date(message, settings, "once")
+        return
     await state.set_state(CreateReminder.repeat)
     await message.answer(
         f"{REPEAT} Takrorlanish turini tanlang:",
@@ -108,9 +120,8 @@ async def got_repeat(
     except Exception:
         pass
 
-    today = today_local(settings.tz)
-    tomorrow = today + timedelta(days=1)
     if kind == "custom":
+        tomorrow = today_local(settings.tz) + timedelta(days=1)
         await call.message.answer(
             f"{CAL} Sana va vaqtlarni yozing. Har bir qatorga bittadan:\n\n"
             f"<code>{tomorrow.isoformat()} 09:00\n"
@@ -119,24 +130,39 @@ async def got_repeat(
             "Har bir qator uchun alohida eslatma yaratiladi."
         )
     else:
-        extra = ""
-        if kind != "once":
-            extra = " (takrorlanish shu sanadan boshlanadi)"
-        await call.message.answer(
-            f"{CAL} Sanani <code>YYYY-MM-DD</code> ko'rinishida yozing"
-            f"{extra}.\nMasalan: <code>{tomorrow.isoformat()}</code>\n\n"
-            "Yoki quyidagi tugmalardan birini tanlang:",
-            reply_markup=date_kb(today.isoformat(), tomorrow.isoformat()),
-        )
+        await prompt_date(call.message, settings, kind)
 
 
-async def _ask_time(target: Message, state: FSMContext, chosen) -> None:
+async def prompt_date(target: Message, settings: Settings, kind: str) -> None:
+    today = today_local(settings.tz)
+    tomorrow = today + timedelta(days=1)
+    extra = ""
+    if kind != "once":
+        extra = " (takrorlanish shu sanadan boshlanadi)"
+    await target.answer(
+        f"{CAL} Sanani <code>YYYY-MM-DD</code> ko'rinishida yozing"
+        f"{extra}.\nMasalan: <code>{tomorrow.isoformat()}</code>\n\n"
+        "Yoki quyidagi tugmalardan birini tanlang:",
+        reply_markup=date_kb(today.isoformat(), tomorrow.isoformat()),
+    )
+
+
+async def ask_time(
+    target: Message, state: FSMContext, chosen, settings: Settings
+) -> None:
+    """Vaqtni so'raydi: tayyor tugmalar yoki yozib (9, 9 00, 9:30)."""
     await state.update_data(date=chosen.isoformat())
     await state.set_state(CreateReminder.time)
+    keyboard = time_kb(chosen, datetime.now(settings.tz))
+    hint = (
+        "Vaqtni tugmadan tanlang yoki yozing: <code>9</code>, "
+        "<code>9 00</code>, <code>9:30</code> (24 soatlik)."
+        if keyboard
+        else "Vaqtni yozing: <code>9</code>, <code>9 00</code> yoki "
+        "<code>21:30</code> (24 soatlik)."
+    )
     await target.answer(
-        f"Sana: <b>{chosen.isoformat()}</b>\n\n"
-        "Endi vaqtni <code>HH:MM</code> ko'rinishida yozing "
-        "(24 soatlik). Masalan: <code>09:30</code>"
+        f"Sana: <b>{chosen.isoformat()}</b>\n\n{hint}", reply_markup=keyboard
     )
 
 
@@ -148,7 +174,7 @@ async def got_date_button(
     today = today_local(settings.tz)
     which = call.data.split(":", 1)[1]
     chosen = today if which == "today" else today + timedelta(days=1)
-    await _ask_time(call.message, state, chosen)
+    await ask_time(call.message, state, chosen, settings)
 
 
 @router.message(CreateReminder.date, PLAIN)
@@ -167,50 +193,100 @@ async def got_date_text(
             f"{WARN} Bu sana o'tib ketgan. Bugungi yoki keyingi sanani yozing."
         )
         return
-    await _ask_time(message, state, chosen)
+    await ask_time(message, state, chosen, settings)
 
 
-@router.message(CreateReminder.time, PLAIN)
-async def got_time(
-    message: Message, state: FSMContext, db: Database, settings: Settings
+async def finish_single(
+    target: Message,
+    user: User,
+    state: FSMContext,
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+    chosen_time: time,
 ) -> None:
-    chosen_time = parse_time(message.text)
-    if chosen_time is None:
-        await message.answer(
-            f"{WARN} Vaqt noto'g'ri. <code>HH:MM</code> ko'rinishida yozing. "
-            "Masalan: <code>09:30</code>"
-        )
-        return
+    """Sana va vaqt tayyor: eslatmani (yoki do'st havolasini) yaratadi."""
     data = await state.get_data()
     chosen_date = parse_date(data["date"])
     remind_at = local_to_utc(chosen_date, chosen_time, settings.tz)
     if remind_at <= now_utc():
-        await message.answer(
-            f"{WARN} Bu vaqt o'tib ketgan. Kelajakdagi vaqtni yozing."
+        await target.answer(
+            f"{WARN} Bu vaqt o'tib ketgan. Kelajakdagi vaqtni tanlang yoki yozing."
         )
         return
-    if await db.count_active(message.from_user.id) >= settings.max_reminders:
+
+    if data.get("friend"):
         await state.clear()
-        await message.answer(
+        await target.answer("Havola tayyorlanmoqda...", reply_markup=main_menu())
+        await send_share_card(
+            target, bot, db, settings, user, data["text"], remind_at
+        )
+        return
+
+    if await db.count_active(user.id) >= settings.max_reminders:
+        await state.clear()
+        await target.answer(
             f"{WARN} Eslatmalar chegarasiga yetdingiz.",
             reply_markup=main_menu(),
         )
         return
 
     row = {
-        "user_id": message.from_user.id,
+        "user_id": user.id,
         "text": data["text"],
         "remind_at": iso_z(remind_at),
         "repeat_type": data["repeat"],
     }
     await db.create_reminders([row])
     await state.clear()
-    await message.answer(
+    await target.answer(
         f"{OK} <b>Eslatma saqlandi!</b>\n\n"
         f"{MEMO} {esc(data['text'])}\n"
         f"{CAL} {fmt_dt(remind_at, settings.tz)}\n"
         f"{REPEAT} {repeat_label(data['repeat'])}",
         reply_markup=main_menu(),
+    )
+
+
+@router.message(CreateReminder.time, PLAIN)
+async def got_time(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+) -> None:
+    chosen_time = parse_time(message.text)
+    if chosen_time is None:
+        await message.answer(
+            f"{WARN} Vaqt tushunarsiz. Masalan: <code>9</code>, "
+            "<code>9 00</code>, <code>9:30</code> yoki <code>21:00</code>"
+        )
+        return
+    await finish_single(
+        message, message.from_user, state, bot, db, settings, chosen_time
+    )
+
+
+@router.callback_query(CreateReminder.time, F.data.startswith("tm:"))
+async def got_time_button(
+    call: CallbackQuery,
+    state: FSMContext,
+    bot: Bot,
+    db: Database,
+    settings: Settings,
+) -> None:
+    chosen_time = parse_time(call.data[3:])
+    if chosen_time is None:
+        await call.answer()
+        return
+    await call.answer()
+    try:
+        await call.message.edit_text(f"Vaqt: <b>{chosen_time.strftime('%H:%M')}</b>")
+    except Exception:
+        pass
+    await finish_single(
+        call.message, call.from_user, state, bot, db, settings, chosen_time
     )
 
 

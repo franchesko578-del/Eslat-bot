@@ -2,8 +2,9 @@
 import asyncio
 import json as jsonlib
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -22,6 +23,11 @@ def iso_z(dt: datetime) -> str:
 def parse_ts(value: str) -> datetime:
     """Bazadan kelgan vaqt matnini datetime'ga aylantiradi."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def is_registered(user: Optional[dict]) -> bool:
+    """To'liq ro'yxatdan o'tgan: rozilik berilgan va telefon yuborilgan."""
+    return bool(user and user.get("consent") and user.get("phone"))
 
 
 def _total(headers) -> int:
@@ -140,6 +146,47 @@ class Database:
         )
         return [row["telegram_id"] for row in (data or [])]
 
+    # ---------- Ro'yxatdan o'tish, xavfsizlik va admin ----------
+    async def get_user(self, user_id: int):
+        data, _ = await self._request("GET", "users", params={"select": "*", "telegram_id": f"eq.{user_id}", "limit": "1"}, retries=1)
+        return data[0] if data else None
+
+    async def register_user(self, user_id: int, full_name: str, username: Optional[str], phone: str):
+        body = {"telegram_id": user_id, "full_name": full_name, "username": username, "phone": phone,
+                "consent": True, "consent_at": iso_z(datetime.now(timezone.utc)),
+                "last_seen_at": iso_z(datetime.now(timezone.utc))}
+        await self._request("POST", "users", params={"on_conflict": "telegram_id"}, body=body,
+                            prefer="resolution=merge-duplicates,return=minimal", retries=1)
+
+    async def is_blocked(self, user_id: int) -> bool:
+        user = await self.get_user(user_id)
+        return bool(user and user.get("is_blocked"))
+
+    async def set_blocked(self, user_id: int, blocked: bool):
+        await self._request("PATCH", "users", params={"telegram_id": f"eq.{user_id}"},
+            body={"is_blocked": blocked}, prefer="return=minimal")
+
+    async def list_users(self, offset: int, limit: int):
+        data, headers = await self._request("GET", "users", params={"select": "telegram_id,full_name,username,phone,is_blocked,created_at", "order": "created_at.desc", "limit": str(limit), "offset": str(offset)}, prefer="count=exact", retries=1)
+        return data or [], _total(headers)
+
+    async def log_message(self, user_id: int, direction: str, message_type: str, content: str):
+        await self._request("POST", "message_logs", body={"telegram_id": user_id, "direction": direction, "message_type": message_type, "content": content[:4000]}, prefer="return=minimal")
+
+    async def get_message_logs(self, user_id: int, limit: int = 20):
+        data, _ = await self._request("GET", "message_logs", params={"select": "direction,message_type,content,created_at", "telegram_id": f"eq.{user_id}", "order": "created_at.desc", "limit": str(limit)}, retries=1)
+        return data or []
+
+    async def list_channels(self):
+        data, _ = await self._request("GET", "required_channels", params={"select": "id,chat_id,title,invite_link", "order": "id.asc"}, retries=1)
+        return data or []
+
+    async def add_channel(self, chat_id: str, title: str, invite_link: Optional[str] = None):
+        await self._request("POST", "required_channels", body={"chat_id": chat_id, "title": title, "invite_link": invite_link}, prefer="return=minimal")
+
+    async def remove_channel(self, channel_id: int):
+        await self._request("DELETE", "required_channels", params={"id": f"eq.{channel_id}"}, prefer="return=minimal")
+
     # ---------- Eslatmalar ----------
     async def create_reminders(self, rows: list) -> list:
         data, _ = await self._request(
@@ -182,6 +229,17 @@ class Database:
         data, _ = await self._request(
             "GET", "reminders", params=params, retries=1
         )
+        return data[0] if data else None
+
+    async def get_reminder_any(self, reminder_id: int, user_id: int):
+        """Holatidan qat'i nazar (faol, bajarilgan) eslatmani o'qiydi."""
+        params = {
+            "select": "*",
+            "id": f"eq.{reminder_id}",
+            "user_id": f"eq.{user_id}",
+            "limit": "1",
+        }
+        data, _ = await self._request("GET", "reminders", params=params, retries=1)
         return data[0] if data else None
 
     async def update_reminder(
@@ -301,6 +359,96 @@ class Database:
         }
         await self._request(
             "POST", "reminder_logs", body=body, prefer="return=minimal"
+        )
+
+    # ---------- Do'stga eslatma (havola) ----------
+    async def create_share(self, row: dict) -> dict:
+        data, _ = await self._request(
+            "POST", "shared_reminders", body=row, prefer="return=representation"
+        )
+        return data[0]
+
+    async def count_open_shares(self, user_id: int) -> int:
+        return await self._count(
+            "shared_reminders",
+            "token",
+            {"from_user": f"eq.{user_id}", "claimed_by": "is.null"},
+        )
+
+    async def get_share(self, token: str):
+        data, _ = await self._request(
+            "GET",
+            "shared_reminders",
+            params={"select": "*", "token": f"eq.{token}", "limit": "1"},
+            retries=1,
+        )
+        return data[0] if data else None
+
+    async def claim_share(self, token: str, user_id: int) -> bool:
+        """Havolani band qiladi. Faqat birinchi odam muvaffaqiyatli bo'ladi."""
+        data, _ = await self._request(
+            "PATCH",
+            "shared_reminders",
+            params={"token": f"eq.{token}", "claimed_by": "is.null"},
+            body={
+                "claimed_by": user_id,
+                "claimed_at": iso_z(datetime.now(timezone.utc)),
+            },
+            prefer="return=representation",
+        )
+        return bool(data)
+
+    async def unclaim_share(self, token: str) -> None:
+        await self._request(
+            "PATCH",
+            "shared_reminders",
+            params={"token": f"eq.{token}"},
+            body={"claimed_by": None, "claimed_at": None},
+            prefer="return=minimal",
+        )
+
+    # ---------- Kunlik faollik ----------
+    async def touch_activity(self, user_id: int, day: date) -> None:
+        """Foydalanuvchi shu kuni faol bo'lganini yozadi (kuniga bir marta)."""
+        await self._request(
+            "POST",
+            "user_activity",
+            params={"on_conflict": "telegram_id,day"},
+            body={"telegram_id": user_id, "day": day.isoformat()},
+            prefer="resolution=ignore-duplicates,return=minimal",
+        )
+
+    async def daily_stats(self, tz: ZoneInfo, days: int = 7) -> list:
+        """Oxirgi kunlar bo'yicha: faol, yangi, yaratilgan, yuborilgan."""
+        today = datetime.now(tz).date()
+
+        async def one(d: date) -> dict:
+            start = datetime.combine(d, time.min, tzinfo=tz).astimezone(timezone.utc)
+            end = datetime.combine(
+                d + timedelta(days=1), time.min, tzinfo=tz
+            ).astimezone(timezone.utc)
+
+            def rng(col: str) -> dict:
+                return {"and": f"({col}.gte.{iso_z(start)},{col}.lt.{iso_z(end)})"}
+
+            active, new, created, sent = await asyncio.gather(
+                self._count("user_activity", "telegram_id", {"day": f"eq.{d.isoformat()}"}),
+                self._count("users", "telegram_id", rng("created_at")),
+                self._count("reminders", "id", rng("created_at")),
+                self._count("reminder_logs", "id", {"ok": "eq.true", **rng("sent_at")}),
+            )
+            return {
+                "day": d,
+                "active": active,
+                "new": new,
+                "created": created,
+                "sent": sent,
+            }
+
+        return list(
+            await asyncio.gather(
+                *(one(today - timedelta(days=i)) for i in range(days))
+            )
         )
 
     # ---------- Admin statistikasi ----------

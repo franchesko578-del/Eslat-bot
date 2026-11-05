@@ -20,7 +20,8 @@ from aiogram.exceptions import (
 
 from app.config import Settings
 from app.db import Database, DatabaseError, parse_ts
-from app.emoji import BELL, CLOCK, REPEAT
+from app.emoji import BELL, CLOCK, PEOPLE, REPEAT
+from app.keyboards import reminder_kb
 from app.utils import esc, fmt_dt, next_occurrence, now_utc, repeat_label
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,8 @@ LATE_AFTER_SECONDS = 300
 
 def build_message(row: dict, old_time, next_time, settings: Settings) -> str:
     text = f"{BELL} <b>ESLATMA</b>\n\n{esc(row['text'])}"
+    if row.get("sender_name"):
+        text += f"\n\n{PEOPLE} {esc(row['sender_name'])} yubordi"
     late = (now_utc() - old_time).total_seconds() > LATE_AFTER_SECONDS
     if late:
         text += (
@@ -46,12 +49,13 @@ def build_message(row: dict, old_time, next_time, settings: Settings) -> str:
     return text
 
 
-async def _send(bot: Bot, user_id: int, text: str) -> None:
+async def _send(bot: Bot, user_id: int, text: str, rid: int) -> None:
+    markup = reminder_kb(rid)  # Bajarildi / 10 daqiqadan keyin / 1 soatdan keyin
     try:
-        await bot.send_message(user_id, text)
+        await bot.send_message(user_id, text, reply_markup=markup)
     except TelegramRetryAfter as error:
         await asyncio.sleep(error.retry_after + 1)
-        await bot.send_message(user_id, text)
+        await bot.send_message(user_id, text, reply_markup=markup)
 
 
 async def _log(db: Database, rid: int, uid: int, ok: bool, err=None) -> None:
@@ -79,7 +83,7 @@ async def handle_one(
 
     text = build_message(row, old_time, next_time, settings)
     try:
-        await _send(bot, user_id, text)
+        await _send(bot, user_id, text, rid)
     except (TelegramForbiddenError, TelegramBadRequest) as error:
         # Foydalanuvchi botni bloklagan yoki chat topilmadi: qayta urinmaymiz
         logger.warning("Yuborib bo'lmadi (id=%s, user=%s): %s", rid, user_id, error)
