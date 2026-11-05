@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: eslatma-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.bot
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: TIMEZONE
+        value: Asia/Tashkent
+      - key: ADMIN_ID
+        value: "7507192517"
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

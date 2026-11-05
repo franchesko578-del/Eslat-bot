@@ -1,0 +1,17 @@
+# Maxfiy fayllar - GitHub'ga yuklanmasin
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Loglar va tizim fayllari
+logs/
+*.log
+.DS_Store
+.idea/
+.vscode/
