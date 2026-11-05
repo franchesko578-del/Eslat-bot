@@ -8,7 +8,14 @@ from aiogram.types import CallbackQuery, Message, User
 from app.config import Settings
 from app.db import Database, iso_z
 from app.emoji import CAL, MEMO, OK, REPEAT, WARN
-from app.keyboards import cancel_menu, date_kb, main_menu, repeat_kb, time_kb
+from app.keyboards import (
+    cancel_menu,
+    date_kb,
+    hour_kb,
+    main_menu,
+    minute_kb,
+    repeat_kb,
+)
 from app.sharing import send_share_card
 from app.states import CreateReminder
 from app.utils import (
@@ -21,6 +28,7 @@ from app.utils import (
     parse_datetime_line,
     parse_time,
     repeat_label,
+    safe_edit,
     today_local,
 )
 
@@ -147,22 +155,24 @@ async def prompt_date(target: Message, settings: Settings, kind: str) -> None:
     )
 
 
+def _picker_header(data: dict) -> str:
+    return (
+        f"{MEMO} {esc(data.get('text', ''))}\n"
+        f"{CAL} {data.get('date', '')}"
+    )
+
+
 async def ask_time(
     target: Message, state: FSMContext, chosen, settings: Settings
 ) -> None:
-    """Vaqtni so'raydi: tayyor tugmalar yoki yozib (9, 9 00, 9:30)."""
-    await state.update_data(date=chosen.isoformat())
+    """Vaqtni so'raydi: avval soat (00-23), keyin minut (00-59)."""
+    await state.update_data(date=chosen.isoformat(), hour=None)
     await state.set_state(CreateReminder.time)
-    keyboard = time_kb(chosen, datetime.now(settings.tz))
-    hint = (
-        "Vaqtni tugmadan tanlang yoki yozing: <code>9</code>, "
-        "<code>9 00</code>, <code>9:30</code> (24 soatlik)."
-        if keyboard
-        else "Vaqtni yozing: <code>9</code>, <code>9 00</code> yoki "
-        "<code>21:30</code> (24 soatlik)."
-    )
+    data = await state.get_data()
     await target.answer(
-        f"Sana: <b>{chosen.isoformat()}</b>\n\n{hint}", reply_markup=keyboard
+        f"{_picker_header(data)}\n\nSoatni tanlang:\n"
+        "<i>Yoki yozing: 9, 9 00, 9:30</i>",
+        reply_markup=hour_kb(),
     )
 
 
@@ -268,21 +278,69 @@ async def got_time(
     )
 
 
+@router.callback_query(CreateReminder.time, F.data.startswith("th:"))
+async def got_hour(
+    call: CallbackQuery, state: FSMContext, settings: Settings
+) -> None:
+    hour = int(call.data[3:])
+    data = await state.get_data()
+    now = datetime.now(settings.tz)
+    if parse_date(data["date"]) == now.date() and hour < now.hour:
+        await call.answer("Bu soat o'tib ketgan.", show_alert=True)
+        return
+    await call.answer()
+    await state.update_data(hour=hour)
+    await safe_edit(
+        call,
+        f"{_picker_header(data)}\n"
+        f"\U0001F552 Soat: <b>{hour:02d}</b>\n\nEndi minutni tanlang:",
+        minute_kb(),
+    )
+
+
+@router.callback_query(CreateReminder.time, F.data == "tb:hour")
+async def back_to_hour(call: CallbackQuery, state: FSMContext) -> None:
+    await call.answer()
+    data = await state.get_data()
+    await state.update_data(hour=None)
+    await safe_edit(
+        call,
+        f"{_picker_header(data)}\n\nSoatni tanlang:\n"
+        "<i>Yoki yozing: 9, 9 00, 9:30</i>",
+        hour_kb(),
+    )
+
+
 @router.callback_query(CreateReminder.time, F.data.startswith("tm:"))
-async def got_time_button(
+async def got_minute(
     call: CallbackQuery,
     state: FSMContext,
     bot: Bot,
     db: Database,
     settings: Settings,
 ) -> None:
-    chosen_time = parse_time(call.data[3:])
-    if chosen_time is None:
-        await call.answer()
+    payload = call.data[3:]
+    data = await state.get_data()
+    if payload.isdigit():
+        hour = data.get("hour")
+        if hour is None:
+            await call.answer("Avval soatni tanlang.", show_alert=True)
+            return
+        chosen_time = time(int(hour), int(payload))
+    else:  # eski xabarlardagi "tm:09:00" tugmalari
+        chosen_time = parse_time(payload)
+        if chosen_time is None:
+            await call.answer()
+            return
+    remind_at = local_to_utc(parse_date(data["date"]), chosen_time, settings.tz)
+    if remind_at <= now_utc():
+        await call.answer("Bu vaqt o'tib ketgan. Boshqa minut tanlang.", show_alert=True)
         return
     await call.answer()
     try:
-        await call.message.edit_text(f"Vaqt: <b>{chosen_time.strftime('%H:%M')}</b>")
+        await call.message.edit_text(
+            f"{_picker_header(data)}\n\U0001F552 Vaqt: <b>{chosen_time.strftime('%H:%M')}</b>"
+        )
     except Exception:
         pass
     await finish_single(

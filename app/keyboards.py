@@ -39,11 +39,12 @@ BTN_SETTINGS = f"{GEAR} Sozlamalar"
 BTN_FRIEND = f"{PEOPLE} Do'stga eslatma"
 BTN_CANCEL = f"{CROSS} Bekor qilish"
 
-QUICK_TIMES = ("08:00", "09:00", "12:00", "18:00", "21:00")
 
-
-def _btn(text: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=data)
+def _btn(text: str, data: str, style: Optional[str] = None) -> InlineKeyboardButton:
+    """style: "primary" (ko'k), "success" (yashil), "danger" (qizil).
+    Eski Telegram ilovalari rangni e'tiborsiz qoldiradi, tugma baribir ishlaydi."""
+    extra = {"style": style} if style else {}
+    return InlineKeyboardButton(text=text, callback_data=data, **extra)
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -89,28 +90,29 @@ def date_kb(today_str: str, tomorrow_str: str) -> InlineKeyboardMarkup:
     )
 
 
-def time_kb(chosen: date, now_local: datetime) -> Optional[InlineKeyboardMarkup]:
-    """Vaqt tugmalari. Bugun bo'lsa, o'tib ketgan vaqtlar ko'rsatilmaydi."""
-    times = []
-    for value in QUICK_TIMES:
-        if chosen == now_local.date() and value <= now_local.strftime("%H:%M"):
-            continue
-        times.append(_btn(value, f"tm:{value}"))
-    if not times:
-        return None
-    rows = [times[i : i + 3] for i in range(0, len(times), 3)]
+def hour_kb() -> InlineKeyboardMarkup:
+    """Soat: 00 dan 23 gacha."""
+    buttons = [_btn(f"{h:02d}", f"th:{h}") for h in range(24)]
+    rows = [buttons[i : i + 6] for i in range(0, 24, 6)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def minute_kb() -> InlineKeyboardMarkup:
+    """Minut: 00 dan 59 gacha."""
+    buttons = [_btn(f"{m:02d}", f"tm:{m}") for m in range(60)]
+    rows = [buttons[i : i + 6] for i in range(0, 60, 6)]
+    rows.append([_btn(f"{BACK} Soatni o'zgartirish", "tb:hour")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def reminder_kb(reminder_id: int) -> InlineKeyboardMarkup:
-    """Eslatma kelganda ko'rinadigan tugmalar."""
+    """Eslatma kelganda ko'rinadigan ko'k tugmalar."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [_btn(f"{OK} Bajarildi", f"rm:done:{reminder_id}")],
-            [
-                _btn(f"{BELL} 10 daqiqadan keyin", f"rm:snz:{reminder_id}:10"),
-                _btn(f"{BELL} 1 soatdan keyin", f"rm:snz:{reminder_id}:60"),
-            ],
+            [_btn(f"{BELL} 5 minutdan keyin", f"rm:snz:{reminder_id}:5", "primary")],
+            [_btn(f"{BELL} 10 minutdan keyin", f"rm:snz:{reminder_id}:10", "primary")],
+            [_btn(f"{BELL} 15 minutdan keyin", f"rm:snz:{reminder_id}:15", "primary")],
+            [_btn(f"{OK} Bajarildi", f"rm:done:{reminder_id}", "primary")],
         ]
     )
 

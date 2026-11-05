@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="reminder_actions")
 
-SNOOZE_LABELS = {10: "10 daqiqadan keyin", 60: "1 soatdan keyin"}
+SNOOZE_LABELS = {
+    5: "5 minutdan keyin",
+    10: "10 minutdan keyin",
+    15: "15 minutdan keyin",
+    60: "1 soatdan keyin",  # eski xabarlardagi tugma uchun
+}
 
 
 async def _mark(call: CallbackQuery, note: str) -> None:
