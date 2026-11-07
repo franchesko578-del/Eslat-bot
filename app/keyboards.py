@@ -1,4 +1,10 @@
-"""Tugmalar (reply va inline klaviaturalar)."""
+"""Tugmalar: reply va inline klaviaturalar. Hamma tugma rangli.
+
+Ranglar (Telegram `style`): primary = ko'k, success = yashil, danger = qizil.
+Eski Telegram ilovalari rangni ko'rsatmaydi, lekin tugma baribir ishlaydi.
+"""
+from typing import Optional
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -7,30 +13,38 @@ from aiogram.types import (
 )
 
 from app.db import parse_ts
-from datetime import date, datetime
-from typing import Optional
-
 from app.emoji import (
     BACK,
     BELL,
+    CAL,
     CHART,
     CROSS,
+    DAYS,
     GEAR,
+    HOURGLASS,
     INFO,
     LIST,
     MEGA,
+    MONTH,
     NEXT,
+    NUMS,
     OK,
     PEOPLE,
     PENCIL,
     PLUS,
     REPEAT,
     SEND,
+    SPARK,
     STATS,
+    SUN,
     TRASH,
     USER,
 )
-from app.utils import fmt_dt, short
+from app.utils import DAY_NAMES, fmt_dt, short
+
+BLUE = "primary"
+GREEN = "success"
+RED = "danger"
 
 BTN_CREATE = f"{PLUS} Eslatma yaratish"
 BTN_LIST = f"{LIST} Eslatmalarim"
@@ -40,22 +54,32 @@ BTN_FRIEND = f"{PEOPLE} Do'stga eslatma"
 BTN_CANCEL = f"{CROSS} Bekor qilish"
 
 
-def _btn(text: str, data: str, style: Optional[str] = None) -> InlineKeyboardButton:
-    """style: "primary" (ko'k), "success" (yashil), "danger" (qizil).
-    Eski Telegram ilovalari rangni e'tiborsiz qoldiradi, tugma baribir ishlaydi."""
+def btn(text: str, data: str, style: Optional[str] = BLUE) -> InlineKeyboardButton:
     extra = {"style": style} if style else {}
     return InlineKeyboardButton(text=text, callback_data=data, **extra)
 
 
+def url_btn(text: str, url: str, style: Optional[str] = GREEN) -> InlineKeyboardButton:
+    extra = {"style": style} if style else {}
+    return InlineKeyboardButton(text=text, url=url, **extra)
+
+
+def reply_btn(text: str, style: Optional[str] = BLUE, **kwargs) -> KeyboardButton:
+    extra = {"style": style} if style else {}
+    return KeyboardButton(text=text, **extra, **kwargs)
+
+
+def _kb(rows: list) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------- Asosiy menyu ----------
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CREATE), KeyboardButton(text=BTN_LIST)],
-            [
-                KeyboardButton(text=BTN_RECURRING),
-                KeyboardButton(text=BTN_SETTINGS),
-            ],
-            [KeyboardButton(text=BTN_FRIEND)],
+            [reply_btn(BTN_CREATE, GREEN), reply_btn(BTN_LIST, BLUE)],
+            [reply_btn(BTN_RECURRING, BLUE), reply_btn(BTN_FRIEND, GREEN)],
+            [reply_btn(BTN_SETTINGS, BLUE)],
         ],
         resize_keyboard=True,
     )
@@ -63,28 +87,64 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 def cancel_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        keyboard=[[reply_btn(BTN_CANCEL, RED)]],
         resize_keyboard=True,
     )
 
 
+# ---------- Yaratish ----------
 def repeat_kb(recurring_only: bool) -> InlineKeyboardMarkup:
     rows = []
+    if recurring_only:
+        rows.append([btn(f"{REPEAT} Har kuni", "rep:daily", GREEN)])
+    else:
+        rows.append(
+            [
+                btn("1\ufe0f\u20e3 Bir marta", "rep:once", BLUE),
+                btn(f"{REPEAT} Har kuni", "rep:daily", GREEN),
+            ]
+        )
+    rows.append(
+        [
+            btn(f"{DAYS} Hafta kunlari", "rep:weekdays", BLUE),
+            btn(f"{CAL} Har hafta", "rep:weekly", GREEN),
+        ]
+    )
+    rows.append(
+        [
+            btn(f"{MONTH} Har oy", "rep:monthly", BLUE),
+            btn(f"{NUMS} Har N kunda", "rep:interval", GREEN),
+        ]
+    )
     if not recurring_only:
-        rows.append([_btn("Bir marta", "rep:once")])
-    rows.append([_btn("Har kuni", "rep:daily")])
-    rows.append([_btn("Har hafta", "rep:weekly")])
-    if not recurring_only:
-        rows.append([_btn("Maxsus sana va vaqt", "rep:custom")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        rows.append([btn(f"{SPARK} Maxsus sana va vaqt", "rep:custom", BLUE)])
+    return _kb(rows)
+
+
+def weekdays_kb(selected: list) -> InlineKeyboardMarkup:
+    """Hafta kunlarini tanlash. Tanlanganlari yashil va belgili."""
+    buttons = []
+    for index, name in enumerate(DAY_NAMES):
+        on = index in selected
+        buttons.append(
+            btn(f"{OK} {name}" if on else name, f"wd:{index}", GREEN if on else BLUE)
+        )
+    return _kb([buttons[:4], buttons[4:], [btn(f"{OK} Tayyor", "wd:ok", GREEN)]])
+
+
+def every_kb() -> InlineKeyboardMarkup:
+    values = (2, 3, 4, 5, 7, 10, 14, 30)
+    buttons = [btn(f"{n} kun", f"ev:{n}", BLUE if i % 2 == 0 else GREEN)
+               for i, n in enumerate(values)]
+    return _kb([buttons[:4], buttons[4:]])
 
 
 def date_kb(today_str: str, tomorrow_str: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"Bugun ({today_str})", "date:today"),
-                _btn(f"Ertaga ({tomorrow_str})", "date:tomorrow"),
+                btn(f"{CAL} Bugun ({today_str})", "date:today", GREEN),
+                btn(f"{CAL} Ertaga ({tomorrow_str})", "date:tomorrow", BLUE),
             ]
         ]
     )
@@ -92,139 +152,184 @@ def date_kb(today_str: str, tomorrow_str: str) -> InlineKeyboardMarkup:
 
 def hour_kb() -> InlineKeyboardMarkup:
     """Soat: 00 dan 23 gacha."""
-    buttons = [_btn(f"{h:02d}", f"th:{h}") for h in range(24)]
-    rows = [buttons[i : i + 6] for i in range(0, 24, 6)]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    buttons = [btn(f"{h:02d}", f"th:{h}") for h in range(24)]
+    return _kb([buttons[i : i + 6] for i in range(0, 24, 6)])
 
 
 def minute_kb() -> InlineKeyboardMarkup:
     """Minut: 00 dan 59 gacha."""
-    buttons = [_btn(f"{m:02d}", f"tm:{m}") for m in range(60)]
+    buttons = [btn(f"{m:02d}", f"tm:{m}") for m in range(60)]
     rows = [buttons[i : i + 6] for i in range(0, 60, 6)]
-    rows.append([_btn(f"{BACK} Soatni o'zgartirish", "tb:hour")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    rows.append([btn(f"{BACK} Soatni o'zgartirish", "tb:hour", RED)])
+    return _kb(rows)
 
 
+# ---------- Eslatma kelganda ----------
 def reminder_kb(reminder_id: int) -> InlineKeyboardMarkup:
-    """Eslatma kelganda ko'rinadigan ko'k tugmalar."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_btn(f"{BELL} 5 minutdan keyin", f"rm:snz:{reminder_id}:5", "primary")],
-            [_btn(f"{BELL} 10 minutdan keyin", f"rm:snz:{reminder_id}:10", "primary")],
-            [_btn(f"{BELL} 15 minutdan keyin", f"rm:snz:{reminder_id}:15", "primary")],
-            [_btn(f"{OK} Bajarildi", f"rm:done:{reminder_id}", "primary")],
+    rid = reminder_id
+    return _kb(
+        [
+            [
+                btn(f"{BELL} 5 min", f"rm:snz:{rid}:5"),
+                btn(f"{BELL} 10 min", f"rm:snz:{rid}:10"),
+                btn(f"{BELL} 15 min", f"rm:snz:{rid}:15"),
+            ],
+            [
+                btn(f"{HOURGLASS} 1 soat", f"rm:snz:{rid}:60"),
+                btn(f"{SUN} Ertaga", f"rm:tom:{rid}"),
+            ],
+            [btn(f"{OK} Bajarildi", f"rm:done:{rid}", GREEN)],
         ]
     )
 
 
 def quick_saved_kb(reminder_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{TRASH} Bekor qilish", f"q:del:{reminder_id}"),
-                _btn(f"{PEOPLE} Do'stga yuborish", f"fr:share:{reminder_id}"),
+                btn(f"{TRASH} Bekor qilish", f"q:del:{reminder_id}", RED),
+                btn(f"{PEOPLE} Do'stga yuborish", f"fr:share:{reminder_id}", BLUE),
             ]
         ]
     )
 
 
 def quick_ask_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{BELL} Eslatma qilish", "q:ask"),
-                _btn("Yo'q", "q:no"),
+                btn(f"{BELL} Eslatma qilish", "q:ask", GREEN),
+                btn(f"{CROSS} Yo'q", "q:no", RED),
             ]
         ]
     )
 
 
 def share_kb(url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=f"{SEND} Do'stga yuborish", url=url)]]
-    )
+    return _kb([[url_btn(f"{SEND} Do'stga yuborish", url, GREEN)]])
 
 
+# ---------- Eslatmalarim ----------
 def list_kb(rows: list, page: int, total: int, page_size: int, tz):
     keyboard = []
     start = page * page_size
     for index, row in enumerate(rows, start=start + 1):
         when = fmt_dt(parse_ts(row["remind_at"]), tz)
         label = f"{index}. {when} {short(row['text'], 22)}"
-        keyboard.append([_btn(label, f"r:view:{row['id']}:{page}")])
+        keyboard.append([btn(label, f"r:view:{row['id']}:{page}")])
     nav = []
     if page > 0:
-        nav.append(_btn(f"{BACK} Oldingi", f"list:{page - 1}"))
+        nav.append(btn(f"{BACK} Oldingi", f"list:{page - 1}"))
     if start + page_size < total:
-        nav.append(_btn(f"Keyingi {NEXT}", f"list:{page + 1}"))
+        nav.append(btn(f"Keyingi {NEXT}", f"list:{page + 1}", GREEN))
     if nav:
         keyboard.append(nav)
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return _kb(keyboard)
 
 
 def detail_kb(reminder_id: int, page: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{PENCIL} Matn", f"r:et:{reminder_id}:{page}"),
-                _btn(f"{PENCIL} Vaqt", f"r:ed:{reminder_id}:{page}"),
+                btn(f"{PENCIL} Matn", f"r:et:{reminder_id}:{page}", BLUE),
+                btn(f"{PENCIL} Vaqt", f"r:ed:{reminder_id}:{page}", GREEN),
             ],
-            [_btn(f"{TRASH} O'chirish", f"r:del:{reminder_id}:{page}")],
-            [_btn(f"{BACK} Orqaga", f"list:{page}")],
+            [btn(f"{TRASH} O'chirish", f"r:del:{reminder_id}:{page}", RED)],
+            [btn(f"{BACK} Orqaga", f"list:{page}", BLUE)],
         ]
     )
 
 
 def confirm_delete_kb(reminder_id: int, page: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{OK} Ha, o'chirish", f"r:delyes:{reminder_id}:{page}"),
-                _btn("Yo'q", f"r:view:{reminder_id}:{page}"),
+                btn(f"{TRASH} Ha, o'chirish", f"r:delyes:{reminder_id}:{page}", RED),
+                btn(f"{BACK} Yo'q", f"r:view:{reminder_id}:{page}", GREEN),
             ]
         ]
     )
 
 
-def settings_kb(is_admin: bool) -> InlineKeyboardMarkup:
+# ---------- Sozlamalar ----------
+def pre_label(minutes: int) -> str:
+    if not minutes:
+        return "o'chiq"
+    return "1 soat" if minutes == 60 else f"{minutes} daqiqa"
+
+
+def digest_label(hour: Optional[int]) -> str:
+    return "o'chiq" if hour is None else f"{hour:02d}:00"
+
+
+def settings_kb(is_admin: bool, pre: int = 0, digest: Optional[int] = None):
     rows = [
-        [_btn(f"{INFO} Yordam", "set:help")],
-        [_btn(f"{TRASH} Barcha eslatmalarni o'chirish", "set:delall")],
+        [btn(f"{HOURGLASS} Oldindan ogohlantirish: {pre_label(pre)}", "set:pre")],
+        [btn(f"{SUN} Ertalabki ro'yxat: {digest_label(digest)}", "set:dg", GREEN)],
+        [btn(f"{INFO} Yordam", "set:help")],
+        [btn(f"{TRASH} Barcha eslatmalarni o'chirish", "set:delall", RED)],
     ]
     if is_admin:
-        rows.append([_btn(f"{USER} Admin panel", "adm:open")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        rows.append([btn(f"{USER} Admin panel", "adm:open", GREEN)])
+    return _kb(rows)
+
+
+def pre_kb(current: int) -> InlineKeyboardMarkup:
+    options = (0, 5, 10, 15, 30, 60)
+    buttons = [
+        btn(
+            (f"{OK} " if n == current else "") + pre_label(n).capitalize(),
+            f"pre:{n}",
+            GREEN if n == current else BLUE,
+        )
+        for n in options
+    ]
+    return _kb([buttons[:3], buttons[3:], [btn(f"{BACK} Orqaga", "set:cancel", RED)]])
+
+
+def digest_kb(current: Optional[int]) -> InlineKeyboardMarkup:
+    options = (None, 6, 7, 8, 9, 10)
+    buttons = [
+        btn(
+            (f"{OK} " if n == current else "") + digest_label(n).capitalize(),
+            f"dg:{'off' if n is None else n}",
+            GREEN if n == current else BLUE,
+        )
+        for n in options
+    ]
+    return _kb([buttons[:3], buttons[3:], [btn(f"{BACK} Orqaga", "set:cancel", RED)]])
 
 
 def confirm_delall_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{OK} Ha, hammasini o'chir", "set:delall_yes"),
-                _btn("Yo'q", "set:cancel"),
+                btn(f"{TRASH} Ha, hammasini", "set:delall_yes", RED),
+                btn(f"{BACK} Yo'q", "set:cancel", GREEN),
             ]
         ]
     )
 
 
+# ---------- Admin ----------
 def admin_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_btn(f"{STATS} Statistika", "adm:stats")],
-            [_btn(f"{CHART} Kunlik faollik", "adm:daily")],
-            [_btn("👥 Foydalanuvchilar", "adm:users:0")],
-            [_btn("📢 Majburiy obuna kanallari", "adm:channels")],
-            [_btn(f"{MEGA} Hammaga xabar yuborish", "adm:broadcast")],
+    return _kb(
+        [
+            [btn(f"{STATS} Statistika", "adm:stats", BLUE)],
+            [btn(f"{CHART} Kunlik faollik", "adm:daily", GREEN)],
+            [btn(f"{PEOPLE} Foydalanuvchilar", "adm:users:0", BLUE)],
+            [btn(f"{MEGA} Majburiy obuna kanallari", "adm:channels", GREEN)],
+            [btn(f"{MEGA} Hammaga xabar yuborish", "adm:broadcast", BLUE)],
         ]
     )
 
 
 def broadcast_confirm_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    return _kb(
+        [
             [
-                _btn(f"{OK} Yuborish", "bc:yes"),
-                _btn(f"{CROSS} Bekor qilish", "bc:no"),
+                btn(f"{OK} Yuborish", "bc:yes", GREEN),
+                btn(f"{CROSS} Bekor qilish", "bc:no", RED),
             ]
         ]
     )

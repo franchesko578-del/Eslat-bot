@@ -6,7 +6,8 @@ Qo'llab-quvvatlanadi:
   Vaqt:    9:00, 9.30, 9 00, 9, soat 9, 9 da, 0930
   Nisbiy:  30 daqiqadan keyin, 2 soatdan keyin, 1 soat 30 daqiqadan keyin,
            yarim soatdan keyin, 3 kundan keyin
-  Takror:  har kuni, har hafta, har dushanba
+  Takror:  har kuni, har hafta, har dushanba, har dushanba va juma,
+           ish kunlari, har oy, har 3 kunda
   Kun payti: ertalab, tushda, kechqurun, kechasi (8 -> 20:00 kabi)
 """
 import re
@@ -49,7 +50,7 @@ NOT_TIME_WORDS = {
     "foiz", "usd", "dollar", "yosh", "yoshda", "kun", "kundan", "soat",
     "soatdan", "daqiqa", "daqiqadan", "min", "hafta", "haftadan", "oy",
     "oydan", "yil", "yildan", "tup", "bosh", "quti", "paket", "shisha",
-    "stakan", "piyola", "xona", "dars", "savol", "bet", "bob", "raqam",
+    "stakan", "piyola", "xona", "savol", "bet", "bob", "raqam",
     "%", "$",
 }
 LEADING_TRASH = {"da", "ga", "dan", "soat", "va", "bilan"}
@@ -74,7 +75,9 @@ class Quick:
     day: Optional[date] = None
     at: Optional[time] = None
     moment: Optional[datetime] = None  # UTC; to'liq vaqt topilgan bo'lsa
-    repeat: Optional[str] = None  # once / daily / weekly
+    repeat: Optional[str] = None  # daily/weekly/weekdays/monthly/interval
+    days: Optional[list] = None  # weekdays uchun: [0, 2, 4]
+    every: Optional[int] = None  # interval uchun: N kun
     error: Optional[str] = None
     found: bool = False  # sana, vaqt yoki takror topildimi
 
@@ -115,6 +118,16 @@ def _adjust_hour(hour: int, period: Optional[str]) -> int:
     return hour
 
 
+def _first_weekday(start: date, at: time, days: list, now: datetime, tz: ZoneInfo):
+    for i in range(0, 15):
+        d = start + timedelta(days=i)
+        if d.weekday() in days:
+            cand = datetime.combine(d, at, tzinfo=tz)
+            if cand > now:
+                return d, cand.astimezone(timezone.utc)
+    return None, None
+
+
 def _local(d: date, t: time, tz: ZoneInfo) -> datetime:
     return datetime.combine(d, t, tzinfo=tz).astimezone(timezone.utc)
 
@@ -139,18 +152,47 @@ def parse_quick(raw: str, now: datetime, tz: ZoneInfo) -> Quick:
     flags = re.I
 
     # ---- 1. Takrorlanish ----
-    m = re.search(rf"\bhar\s+(?:{_WD})\w*(?:\s+kuni)?", work, flags)
+    rep_days: Optional[list] = None
+    rep_every: Optional[int] = None
+    m = re.search(
+        rf"\bhar\s+((?:{_WD})\w*(?:\s*(?:,|va)\s*(?:{_WD})\w*)*)(?:\s+kuni)?",
+        work,
+        flags,
+    )
     if m:
-        wd_name = re.search(_WD, m.group(0), flags).group(0).lower()
-        weekday = WEEKDAYS[wd_name]
-        repeat = "weekly"
+        names = re.findall(rf"\b({_WD})", m.group(1), flags)
+        found_days = sorted({WEEKDAYS[n.lower()] for n in names})
+        if len(found_days) > 1:
+            repeat = "weekdays"
+            rep_days = found_days
+        elif found_days:
+            repeat = "weekly"
+            weekday = found_days[0]
+        work = _mask(work, m)
+    m = re.search(r"\b(?:har\s+)?ish\s+kun(?:i|lari)\b", work, flags)
+    if m and repeat is None:
+        repeat = "weekdays"
+        rep_days = [0, 1, 2, 3, 4]
+        work = _mask(work, m)
+    m = re.search(r"\bhar\s+(\d{1,3})\s*kun\w*", work, flags)
+    if m and repeat is None:
+        n = int(m.group(1))
+        if n == 1:
+            repeat = "daily"
+        elif 2 <= n <= 365:
+            repeat = "interval"
+            rep_every = n
         work = _mask(work, m)
     m = re.search(r"\bhar\s*hafta\w*|\bhaftalik\b", work, flags)
-    if m:
+    if m and repeat is None:
         repeat = "weekly"
         work = _mask(work, m)
+    m = re.search(r"\bhar\s*oy\w*|\boylik\b", work, flags)
+    if m and repeat is None:
+        repeat = "monthly"
+        work = _mask(work, m)
     m = re.search(r"\bhar\s*kun(?:i|lari)?\b|\bkundalik\b", work, flags)
-    if m:
+    if m and repeat is None:
         repeat = "daily"
         work = _mask(work, m)
 
@@ -364,6 +406,8 @@ def parse_quick(raw: str, now: datetime, tz: ZoneInfo) -> Quick:
     )
     res.found = found
     res.repeat = repeat
+    res.days = rep_days
+    res.every = rep_every
     res.at = at
     if res.error:
         return res
@@ -391,6 +435,16 @@ def parse_quick(raw: str, now: datetime, tz: ZoneInfo) -> Quick:
             res.day = dt.date()
             res.at = dt.time()
             moment = dt.astimezone(timezone.utc)
+        res.moment = moment
+        return res
+
+    if repeat == "weekdays" and rep_days:
+        if at is None:
+            d, _ = _first_weekday(today, time(0, 0), rep_days, now - timedelta(days=1), tz)
+            res.day = d
+            return res
+        d, moment = _first_weekday(today, at, rep_days, now, tz)
+        res.day = d
         res.moment = moment
         return res
 

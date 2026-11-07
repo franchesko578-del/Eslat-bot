@@ -4,7 +4,6 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -13,7 +12,7 @@ from aiogram.types import (
 from app.config import Settings
 from app.db import Database, is_registered
 from app.emoji import OK, WAVE
-from app.keyboards import main_menu
+from app.keyboards import GREEN, main_menu, reply_btn
 from app.sharing import accept_gift, gift_token
 from app.states import Registration
 from app.utils import HELP_TEXT, esc
@@ -27,7 +26,7 @@ VERIFY_TEXT = "Akkauntingizni tasdiqlang \U0001F447"
 def phone_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📱 Telefon raqamni ulashish", request_contact=True)]
+            [reply_btn("📱 Telefon raqamni ulashish", GREEN, request_contact=True)]
         ],
         resize_keyboard=True,
         one_time_keyboard=True,

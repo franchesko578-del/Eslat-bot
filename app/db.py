@@ -187,6 +187,45 @@ class Database:
     async def remove_channel(self, channel_id: int):
         await self._request("DELETE", "required_channels", params={"id": f"eq.{channel_id}"}, prefer="return=minimal")
 
+    async def update_user(self, user_id: int, fields: dict) -> None:
+        await self._request(
+            "PATCH",
+            "users",
+            params={"telegram_id": f"eq.{user_id}"},
+            body=fields,
+            prefer="return=minimal",
+        )
+
+    async def users_with_pre(self) -> list:
+        """Oldindan ogohlantirish yoqilgan foydalanuvchilar."""
+        data, _ = await self._request(
+            "GET",
+            "users",
+            params={
+                "select": "telegram_id,pre_minutes",
+                "pre_minutes": "gt.0",
+                "is_blocked": "eq.false",
+                "limit": "5000",
+            },
+            retries=1,
+        )
+        return data or []
+
+    async def users_with_digest(self) -> list:
+        """Ertalabki ro'yxat yoqilgan foydalanuvchilar."""
+        data, _ = await self._request(
+            "GET",
+            "users",
+            params={
+                "select": "telegram_id,digest_hour,last_digest_date",
+                "digest_hour": "not.is.null",
+                "is_blocked": "eq.false",
+                "limit": "5000",
+            },
+            retries=1,
+        )
+        return data or []
+
     # ---------- Eslatmalar ----------
     async def create_reminders(self, rows: list) -> list:
         data, _ = await self._request(
@@ -289,6 +328,49 @@ class Database:
         )
         return data or []
 
+    async def pre_candidates(
+        self, user_ids: list, now: datetime, until: datetime
+    ) -> list:
+        """Oldindan ogohlantirish yuborilishi mumkin bo'lgan eslatmalar."""
+        result = []
+        for i in range(0, len(user_ids), 150):
+            chunk = user_ids[i : i + 150]
+            params = {
+                "select": "*",
+                "status": "eq.active",
+                "pre_sent": "eq.false",
+                "user_id": f"in.({','.join(str(u) for u in chunk)})",
+                "and": f"(remind_at.gt.{iso_z(now)},remind_at.lte.{iso_z(until)})",
+                "order": "remind_at.asc",
+                "limit": "200",
+            }
+            data, _ = await self._request("GET", "reminders", params=params, retries=1)
+            result.extend(data or [])
+        return result
+
+    async def mark_pre_sent(self, reminder_id: int) -> None:
+        await self._request(
+            "PATCH",
+            "reminders",
+            params={"id": f"eq.{reminder_id}"},
+            body={"pre_sent": True},
+            prefer="return=minimal",
+        )
+
+    async def reminders_between(
+        self, user_id: int, start: datetime, end: datetime, limit: int = 30
+    ) -> list:
+        params = {
+            "select": "text,remind_at,repeat_type,repeat_days,repeat_every",
+            "user_id": f"eq.{user_id}",
+            "status": "eq.active",
+            "and": f"(remind_at.gte.{iso_z(start)},remind_at.lt.{iso_z(end)})",
+            "order": "remind_at.asc",
+            "limit": str(limit),
+        }
+        data, _ = await self._request("GET", "reminders", params=params, retries=1)
+        return data or []
+
     async def claim(
         self,
         reminder_id: int,
@@ -305,7 +387,7 @@ class Database:
         if new_time is None:
             body = {"status": "done"}
         else:
-            body = {"remind_at": iso_z(new_time)}
+            body = {"remind_at": iso_z(new_time), "pre_sent": False}
         data, _ = await self._request(
             "PATCH",
             "reminders",

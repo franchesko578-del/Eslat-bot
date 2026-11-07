@@ -91,3 +91,15 @@ create table if not exists public.user_activity (
 );
 create index if not exists user_activity_day_idx on public.user_activity(day);
 alter table public.user_activity enable row level security;
+
+-- ===== 3-yangilanish: takrorlash turlari, oldindan ogohlantirish, ertalabki ro'yxat =====
+alter table public.reminders drop constraint if exists reminders_repeat_type_check;
+alter table public.reminders add constraint reminders_repeat_type_check
+    check (repeat_type in ('once','daily','weekly','weekdays','monthly','interval'));
+alter table public.reminders add column if not exists repeat_days text;
+alter table public.reminders add column if not exists repeat_every integer;
+alter table public.reminders add column if not exists pre_sent boolean not null default false;
+
+alter table public.users add column if not exists pre_minutes integer not null default 0;
+alter table public.users add column if not exists digest_hour smallint;
+alter table public.users add column if not exists last_digest_date date;

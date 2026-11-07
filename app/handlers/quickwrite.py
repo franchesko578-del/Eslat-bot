@@ -9,12 +9,20 @@ from aiogram.types import CallbackQuery, Message
 
 from app.config import Settings
 from app.db import Database, iso_z
-from app.emoji import BOLT, CAL, MEMO, OK, REPEAT, TRASH, WARN
+from app.emoji import CAL, MEMO, OK, REPEAT, TRASH, WARN
 from app.handlers.create import MAX_TEXT, ask_time, prompt_date
-from app.keyboards import main_menu, quick_ask_kb, quick_saved_kb
+from app.keyboards import quick_ask_kb, quick_saved_kb
 from app.quick import parse_quick
 from app.states import CreateReminder
-from app.utils import PLAIN, esc, fmt_dt, repeat_label, safe_edit
+from app.utils import (
+    PLAIN,
+    esc,
+    fmt_dt,
+    format_days,
+    repeat_extra,
+    repeat_label,
+    safe_edit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,21 +44,19 @@ async def quick_text(
     # Hech narsa topilmadi: oddiy matn. Eslatma qilishni so'raymiz.
     if not result.found:
         if len(raw) > MAX_TEXT:
-            await message.answer(
-                f"{WARN} Matn juda uzun. Eng ko'pi {MAX_TEXT} belgi."
-            )
+            await message.answer(f"{WARN} Matn juda uzun. Eng ko'pi {MAX_TEXT} belgi.")
             return
         await state.update_data(pending_text=raw)
         await message.answer(
-            f"{MEMO} <i>{esc(raw[:200])}</i>\n\nShundan eslatma qilaymi?",
+            f"{MEMO} <i>{esc(raw[:200])}</i>\n\nEslatma qilaymi?",
             reply_markup=quick_ask_kb(),
         )
         return
 
     if not result.text:
         await message.answer(
-            f"{MEMO} Nima haqida eslatay? Matnni ham yozing.\n"
-            "Masalan: <code>ertaga 9:00 dori ichish</code>"
+            f"{MEMO} Nima haqida eslatay? Matnni ham yozing:\n"
+            "<code>ertaga 9:00 dori ichish</code>"
         )
         return
     if len(result.text) > MAX_TEXT:
@@ -60,8 +66,8 @@ async def quick_text(
     user_id = message.from_user.id
     if await db.count_active(user_id) >= settings.max_reminders:
         await message.answer(
-            f"{WARN} Faol eslatmalar soni chegaraga yetdi "
-            f"({settings.max_reminders} ta). Avval keraksizlarini o'chiring."
+            f"{WARN} Eslatmalar chegarasiga yetdingiz ({settings.max_reminders} ta). "
+            "Keraksizlarini o'chiring."
         )
         return
 
@@ -69,6 +75,8 @@ async def quick_text(
 
     # To'liq vaqt topildi: darhol saqlaymiz
     if result.moment is not None:
+        start_day = result.moment.astimezone(settings.tz).date()
+        extra = repeat_extra(repeat, result.days, result.every, start_day)
         rows = await db.create_reminders(
             [
                 {
@@ -76,24 +84,33 @@ async def quick_text(
                     "text": result.text,
                     "remind_at": iso_z(result.moment),
                     "repeat_type": repeat,
+                    **extra,
                 }
             ]
         )
         await state.clear()
-        rid = rows[0]["id"]
-        await message.answer(
-            f"{OK} <b>Eslatma saqlandi!</b>\n\n"
-            f"{MEMO} {esc(result.text)}\n"
-            f"{CAL} {fmt_dt(result.moment, settings.tz)}\n"
-            f"{REPEAT} {repeat_label(repeat)}",
-            reply_markup=quick_saved_kb(rid),
-        )
+        lines = [
+            f"{OK} <b>Saqlandi</b>\n",
+            f"{MEMO} {esc(result.text)}",
+            f"{CAL} {fmt_dt(result.moment, settings.tz)}",
+        ]
+        if repeat != "once":
+            lines.append(
+                f"{REPEAT} "
+                f"{repeat_label(repeat, extra.get('repeat_days'), extra.get('repeat_every'))}"
+            )
+        await message.answer("\n".join(lines), reply_markup=quick_saved_kb(rows[0]["id"]))
         return
 
     # Qisman topildi: yetishmayotgan qismini tugmalar bilan so'raymiz
     await state.clear()
     await state.update_data(
-        text=result.text, repeat=repeat, recurring_only=False, friend=False
+        text=result.text,
+        repeat=repeat,
+        days=result.days or [],
+        every=result.every,
+        recurring_only=False,
+        friend=False,
     )
     if result.day is not None:
         await ask_time(message, state, result.day, settings)
@@ -117,7 +134,7 @@ async def quick_ask(
     await call.answer()
     await state.clear()
     await state.update_data(
-        text=text, repeat="once", recurring_only=False, friend=False
+        text=text, repeat="once", days=[], every=None, recurring_only=False, friend=False
     )
     await state.set_state(CreateReminder.date)
     try:
@@ -142,4 +159,4 @@ async def quick_delete(call: CallbackQuery, db: Database) -> None:
     rid = int(call.data.split(":")[2])
     deleted = await db.delete_reminder(rid, call.from_user.id)
     await call.answer("O'chirildi" if deleted else "Eslatma topilmadi")
-    await safe_edit(call, f"{TRASH} Eslatma bekor qilindi.")
+    await safe_edit(call, f"{TRASH} Eslatma bekor qilindi")

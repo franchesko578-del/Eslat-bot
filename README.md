@@ -3,11 +3,15 @@
 Telegram eslatma boti. Python + aiogram 3 + Supabase + Render.
 
 ## Imkoniyatlar
-- Tez yozish: "ertaga 9:00 dori ichish", "30 daqiqadan keyin choy", "har kuni 8 00 vitamin". Soat 9, 9 00, 9:00, soat 9 da kabi yoziladi
-- Eslatma yaratish: matn, sana va vaqt. Vaqtni tugma bilan tanlash (08:00, 09:00, 12:00, 18:00, 21:00) yoki yozish mumkin
-- Eslatma kelganda tugmalar: Bajarildi, 10 daqiqadan keyin, 1 soatdan keyin
+- Tez yozish: "ertaga 9:00 dori ichish", "30 daqiqadan keyin choy", "har dushanba, juma 18:00 futbol", "har 3 kunda 9:00 dori". Soat 9, 9 00, 9:00, soat 9 da kabi yoziladi
+- Eslatma yaratish: matn, sana, so'ng soat (00-23) va minut (00-59) tugmalari
+- Takrorlash: har kuni, hafta kunlari (Du, Chor, Ju...), har hafta, har oy, har N kunda
+- Eslatma kelganda tugmalar: 5, 10, 15 daqiqa, 1 soat, ertaga, Bajarildi
+- Oldindan ogohlantirish (Sozlamalar): eslatmadan 5-60 daqiqa oldin xabar
+- Ertalabki ro'yxat (Sozlamalar): har ertalab bugungi eslatmalar ro'yxati
+- Bot xatoga uchrasa, adminga Telegram orqali xabar keladi
+- Barcha tugmalar rangli (Telegram'ning yangi `style` imkoniyati)
 - Do'stga eslatma: havola orqali boshqa odamga eslatma yuborish
-- Takrorlanish: bir marta, har kuni, har hafta, maxsus sana va vaqt
 - Eslatmalarim: ko'rish, tahrirlash, o'chirish
 - Admin (/admin): statistika, kunlik faol foydalanuvchilar, hammaga xabar yuborish
 - Vaqt zonasi: Asia/Tashkent
@@ -19,6 +23,7 @@ Telegram eslatma boti. Python + aiogram 3 + Supabase + Render.
     app/db.py             Supabase bilan ishlash
     app/quick.py          tez yozish (matndan sana va vaqtni ajratish)
     app/sharing.py        do'stga eslatma havolalari
+    app/alerts.py         adminga xato haqida xabar
     app/keyboards.py      tugmalar
     app/scheduler.py      eslatma yuboruvchi
     app/handlers/         buyruq va tugma ishlovchilari
@@ -39,9 +44,9 @@ Telegram eslatma boti. Python + aiogram 3 + Supabase + Render.
 To'liq yo'riqnoma PDF hujjatda.
 
 ## Ro'yxatdan o'tish va xavfsizlik imkoniyatlari
-- /start da foydalanish shartlari ko'rsatiladi; foydalanuvchi alohida rozilik beradi.
+- /start da akkaunt telefon raqami orqali tasdiqlanadi.
 - Telefon raqami Telegram'ning `request_contact` tugmasi orqali olinadi. Faqat o'z raqami qabul qilinadi.
-- Ro'yxatdan o'tish ikki bosqichli: rozilik, keyin telefon. Lokatsiya so'ralmaydi.
+- Lokatsiya so'ralmaydi.
 - Admin panelida foydalanuvchilar, profil ma'lumotlari, telefon, bloklash va xabarlar jurnali mavjud.
 - Admin majburiy obuna kanallarini qo'shishi/o'chirishi mumkin. Kanal tekshiruvi uchun bot kanalga administrator qilib qo'yilishi kerak.
 - Xabarlar jurnali rozilikdan keyin yuborilgan matnli xabarlarni qayd etadi; maxfiy kodlar/parollar yubormaslik tavsiya etiladi.

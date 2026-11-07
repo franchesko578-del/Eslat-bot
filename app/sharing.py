@@ -9,7 +9,7 @@ from aiogram.types import LinkPreviewOptions, Message, User
 
 from app.config import Settings
 from app.db import Database, iso_z, parse_ts
-from app.emoji import CAL, GIFT, MEMO, OK, PEOPLE, WARN
+from app.emoji import CAL, GIFT, LINK, MEMO, OK, PEOPLE, WARN
 from app.keyboards import main_menu, share_kb
 from app.utils import esc, fmt_dt, now_utc
 
@@ -61,12 +61,11 @@ async def send_share_card(
     )
     share_url = f"https://t.me/share/url?url={quote(link, safe='')}&text={quote(invite)}"
     await message.answer(
-        f"{PEOPLE} <b>Do'stga eslatma tayyor!</b>\n\n"
+        f"{PEOPLE} <b>Do'stga eslatma tayyor</b>\n\n"
         f"{MEMO} {esc(text)}\n"
         f"{CAL} {fmt_dt(remind_at, settings.tz)}\n\n"
-        "Pastdagi tugma bilan do'stingizga yuboring yoki havolani nusxalang:\n"
-        f"{link}\n\n"
-        "Havola bir kishi uchun ishlaydi.",
+        f"{LINK} {link}\n"
+        "Tugmani bosib yuboring. Havola bir kishi uchun ishlaydi.",
         reply_markup=share_kb(share_url),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
@@ -124,11 +123,11 @@ async def accept_gift(
 
     sender = esc(share.get("from_name") or "Do'stingiz")
     await message.answer(
-        f"{GIFT} <b>{sender}</b> sizga eslatma yubordi!\n\n"
+        f"{GIFT} <b>{sender}</b> sizga eslatma yubordi\n\n"
         f"{MEMO} {esc(share['text'])}\n"
         f"{CAL} {fmt_dt(remind_at, settings.tz)}\n\n"
-        f"{OK} Shu vaqtda eslataman. Siz ham do'stingizga eslatma yuborishingiz "
-        "mumkin: pastdagi \"Do'stga eslatma\" tugmasi.",
+        f"{OK} Shu vaqtda eslataman. Siz ham do'stingizga yuborishingiz mumkin: "
+        f"\"Do'stga eslatma\" tugmasi.",
         reply_markup=main_menu(),
     )
     try:

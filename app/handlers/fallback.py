@@ -12,11 +12,6 @@ router.message.filter(F.chat.type == "private")
 @router.message()
 async def unknown_message(message: Message, state: FSMContext) -> None:
     if await state.get_state() is not None:
-        await message.answer(
-            "Iltimos, so'ralgan ma'lumotni matn ko'rinishida yuboring "
-            "yoki /cancel bosing."
-        )
+        await message.answer("✍️ Matn yuboring yoki /cancel bosing.")
         return
-    await message.answer(
-        "Quyidagi tugmalardan foydalaning:", reply_markup=main_menu()
-    )
+    await message.answer("👇 Menyudan tanlang", reply_markup=main_menu())

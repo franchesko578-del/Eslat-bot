@@ -15,7 +15,16 @@ from aiogram.types import CallbackQuery, Message
 from app.config import Settings
 from app.db import Database
 from app.emoji import BELL, CAL, CHART, MEGA, OK, STATS, USER, WARN
-from app.keyboards import admin_kb, broadcast_confirm_kb, cancel_menu, main_menu
+from app.keyboards import (
+    BLUE,
+    GREEN,
+    RED,
+    admin_kb,
+    broadcast_confirm_kb,
+    btn,
+    cancel_menu,
+    main_menu,
+)
 from app.states import Broadcast, AddChannel
 from app.utils import PLAIN, esc, safe_edit, start_of_today_utc
 
@@ -177,17 +186,17 @@ async def cb_users(call: CallbackQuery, db: Database):
     await call.answer()
     page = max(0, int(call.data.rsplit(":", 1)[1]))
     rows, total = await db.list_users(page * 10, 10)
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardMarkup
     buttons = []
     for row in rows:
         title = row.get("full_name") or str(row["telegram_id"])
         status = "⛔" if row.get("is_blocked") else "👤"
-        buttons.append([InlineKeyboardButton(text=f"{status} {title[:35]} · {row['telegram_id']}", callback_data=f"adm:user:{row['telegram_id']}:{page}")])
+        buttons.append([btn(f"{status} {title[:35]} · {row['telegram_id']}", f"adm:user:{row['telegram_id']}:{page}", RED if row.get("is_blocked") else BLUE)])
     nav = []
-    if page > 0: nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"adm:users:{page-1}"))
-    if (page + 1) * 10 < total: nav.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"adm:users:{page+1}"))
+    if page > 0: nav.append(btn("⬅️ Oldingi", f"adm:users:{page-1}"))
+    if (page + 1) * 10 < total: nav.append(btn("Keyingi ➡️", f"adm:users:{page+1}", GREEN))
     if nav: buttons.append(nav)
-    buttons.append([InlineKeyboardButton(text="⬅️ Admin panel", callback_data="adm:open")])
+    buttons.append([btn("⬅️ Admin panel", "adm:open", RED)])
     await call.message.answer(f"<b>Foydalanuvchilar</b>\nJami: {total}\nSahifa: {page+1}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 @router.callback_query(F.data.startswith("adm:user:"))
@@ -202,13 +211,13 @@ async def cb_user_detail(call: CallbackQuery, db: Database):
             f"Ism: {esc(user.get('full_name') or '—')}\nUsername: @{esc(user.get('username') or 'yoq')}\n"
             f"Telefon: <code>{esc(user.get('phone') or '—')}</code>\nHolat: {status}\n"
             f"Ro'yxatdan o'tgan: {esc(user.get('created_at') or '—')}")
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardMarkup
     action = "adm:unblock" if user.get("is_blocked") else "adm:block"
     label = "Blokdan chiqarish" if user.get("is_blocked") else "Bloklash"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=label, callback_data=f"{action}:{uid}:{page}")],
-        [InlineKeyboardButton(text="Xabarlar tarixi", callback_data=f"adm:logs:{uid}")],
-        [InlineKeyboardButton(text="⬅️ Ro'yxat", callback_data=f"adm:users:{page}")]])
+        [btn(label, f"{action}:{uid}:{page}", GREEN if user.get("is_blocked") else RED)],
+        [btn("📜 Xabarlar tarixi", f"adm:logs:{uid}", BLUE)],
+        [btn("⬅️ Ro'yxat", f"adm:users:{page}", RED)]])
     await call.message.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("adm:block:"))
@@ -237,10 +246,10 @@ async def cb_user_logs(call: CallbackQuery, db: Database):
 async def cb_channels(call: CallbackQuery, db: Database):
     await call.answer()
     rows = await db.list_channels()
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    buttons = [[InlineKeyboardButton(text=f"🗑 {r['title']} ({r['chat_id']})", callback_data=f"adm:chdel:{r['id']}")] for r in rows]
-    buttons.append([InlineKeyboardButton(text="➕ Kanal qo'shish", callback_data="adm:chadd")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Admin panel", callback_data="adm:open")])
+    from aiogram.types import InlineKeyboardMarkup
+    buttons = [[btn(f"🗑 {r['title']} ({r['chat_id']})", f"adm:chdel:{r['id']}", RED)] for r in rows]
+    buttons.append([btn("➕ Kanal qo'shish", "adm:chadd", GREEN)])
+    buttons.append([btn("⬅️ Admin panel", "adm:open", BLUE)])
     await call.message.answer("<b>Majburiy obuna kanallari</b>\nKanalni o'chirish uchun uning tugmasini bosing.", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 @router.callback_query(F.data == "adm:chadd")

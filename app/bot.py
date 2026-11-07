@@ -12,6 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, ErrorEvent
 from aiohttp import web
 
+from app.alerts import notify_admin
 from app.config import load_settings
 from app.db import Database
 from app.handlers import get_routers
@@ -40,10 +41,27 @@ def setup_logging() -> None:
         logger.warning("Log faylini yaratib bo'lmadi, faqat ekranga yoziladi")
 
 
-async def on_error(event: ErrorEvent) -> bool:
-    """Kutilmagan xatolarni logga yozadi va foydalanuvchiga xabar beradi."""
+async def on_error(event: ErrorEvent, bot: Bot, settings) -> bool:
+    """Kutilmagan xatolarni logga yozadi, foydalanuvchiga va adminga xabar beradi."""
     logger.error("Handlerda xatolik: %r", event.exception, exc_info=event.exception)
     update = event.update
+    try:
+        who = None
+        kind = "update"
+        if update.message:
+            who, kind = update.message.from_user.id, "xabar"
+        elif update.callback_query:
+            who, kind = update.callback_query.from_user.id, "tugma"
+        error = event.exception
+        await notify_admin(
+            bot,
+            settings,
+            "Botda xatolik",
+            f"{type(error).__name__}: {error}\nFoydalanuvchi: {who} ({kind})",
+            key=f"{type(error).__name__}:{str(error)[:80]}",
+        )
+    except Exception:
+        logger.exception("Adminga xabar yuborib bo'lmadi")
     try:
         if update.message:
             await update.message.answer(

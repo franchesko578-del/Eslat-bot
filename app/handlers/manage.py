@@ -1,4 +1,6 @@
 """Eslatmalarim: ko'rish, tahrirlash va o'chirish."""
+from datetime import timedelta
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -20,7 +22,7 @@ from app.utils import (
     fmt_dt,
     now_utc,
     parse_datetime_line,
-    repeat_label,
+    row_repeat,
     safe_edit,
     short,
 )
@@ -37,8 +39,9 @@ async def render_list(user_id: int, page: int, db: Database, settings: Settings)
     rows, total = await db.list_active(user_id, page * PAGE_SIZE, PAGE_SIZE)
     if total == 0:
         return (
-            "Hozircha faol eslatmalaringiz yo'q.\n\n"
-            "Yangi eslatma yaratish uchun menyudan foydalaning.",
+            f"{LIST} Faol eslatmalar yo'q.\n\n"
+            "Yangisini yaratish: pastdagi menyu yoki shunchaki yozing, "
+            "masalan: <code>ertaga 9:00 dori ichish</code>",
             None,
         )
     last_page = (total - 1) // PAGE_SIZE
@@ -50,23 +53,22 @@ async def render_list(user_id: int, page: int, db: Database, settings: Settings)
     number = page * PAGE_SIZE + 1
     for row in rows:
         when = fmt_dt(parse_ts(row["remind_at"]), settings.tz)
-        label = repeat_label(row["repeat_type"])
+        mark = f" {REPEAT}" if row["repeat_type"] != "once" else ""
         lines.append(
-            f"{number}. {CAL} {when} | {label}\n"
-            f"    {esc(short(row['text'], 60))}"
+            f"<b>{number}.</b> {CAL} {when}{mark}\n"
+            f"     {MEMO} {esc(short(row['text'], 60))}"
         )
         number += 1
-    lines.append("\nBatafsil ko'rish uchun tugmani bosing.")
     keyboard = list_kb(rows, page, total, PAGE_SIZE, settings.tz)
     return "\n".join(lines), keyboard
 
 
 def detail_text(row: dict, settings: Settings) -> str:
     when = fmt_dt(parse_ts(row["remind_at"]), settings.tz)
-    return (
-        f"{MEMO} <b>Eslatma</b>\n\n{esc(row['text'])}\n\n"
-        f"{CAL} {when}\n{REPEAT} {repeat_label(row['repeat_type'])}"
-    )
+    text = f"{MEMO} <b>Eslatma</b>\n\n{esc(row['text'])}\n\n{CAL} {when}"
+    if row["repeat_type"] != "once":
+        text += f"\n{REPEAT} {row_repeat(row)}"
+    return text
 
 
 @router.message(F.text.endswith("Eslatmalarim"))
@@ -120,7 +122,7 @@ async def cb_delete_ask(call: CallbackQuery, db: Database, settings: Settings) -
     await call.answer()
     await safe_edit(
         call,
-        f"{WARN} Shu eslatmani o'chirasizmi?\n\n{detail_text(row, settings)}",
+        f"{WARN} <b>O'chiraymi?</b>\n\n{detail_text(row, settings)}",
         confirm_delete_kb(reminder_id, page),
     )
 
@@ -166,10 +168,8 @@ async def cb_edit_when(
     await state.set_state(EditReminder.when)
     await state.update_data(rid=reminder_id, page=page)
     await call.message.answer(
-        f"{PENCIL} Yangi sana va vaqtni yozing:\n\n"
-        "<code>YYYY-MM-DD HH:MM</code>\n"
-        f"Masalan: <code>{fmt_dt(now_utc(), settings.tz)}</code> "
-        "(kelajakdagi vaqt bo'lishi kerak)",
+        f"{PENCIL} Yangi sana va vaqtni yozing:\n"
+        f"<code>{fmt_dt(now_utc() + timedelta(hours=1), settings.tz)}</code>",
         reply_markup=cancel_menu(),
     )
 
@@ -198,7 +198,7 @@ async def got_new_text(
     if not updated:
         await message.answer("Eslatma topilmadi.", reply_markup=main_menu())
         return
-    await message.answer(f"{OK} Matn yangilandi.", reply_markup=main_menu())
+    await message.answer(f"{OK} Matn yangilandi", reply_markup=main_menu())
     await _show_detail(message, db, settings, data["rid"], data["page"])
 
 
@@ -209,18 +209,23 @@ async def got_new_when(
     moment = parse_datetime_line(message.text, settings.tz)
     if moment is None:
         await message.answer(
-            f"{WARN} Format noto'g'ri. Kerak: <code>YYYY-MM-DD HH:MM</code>"
+            f"{WARN} Format noto'g'ri. Masalan: <code>2026-11-05 9:30</code>"
         )
         return
     if moment <= now_utc():
         await message.answer(f"{WARN} Bu vaqt o'tib ketgan.")
         return
     data = await state.get_data()
-    fields = {"remind_at": iso_z(moment), "status": "active", "fail_count": 0}
+    fields = {
+        "remind_at": iso_z(moment),
+        "status": "active",
+        "fail_count": 0,
+        "pre_sent": False,
+    }
     updated = await db.update_reminder(data["rid"], message.from_user.id, fields)
     await state.clear()
     if not updated:
         await message.answer("Eslatma topilmadi.", reply_markup=main_menu())
         return
-    await message.answer(f"{OK} Vaqt yangilandi.", reply_markup=main_menu())
+    await message.answer(f"{OK} Vaqt yangilandi", reply_markup=main_menu())
     await _show_detail(message, db, settings, data["rid"], data["page"])

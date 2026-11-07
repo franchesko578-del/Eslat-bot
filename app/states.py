@@ -10,7 +10,8 @@ class AddChannel(StatesGroup):
     invite = State()
 
 class CreateReminder(StatesGroup):
-    text = State(); repeat = State(); date = State(); time = State(); custom = State()
+    text = State(); repeat = State(); days = State(); every = State()
+    date = State(); time = State(); custom = State()
 
 class EditReminder(StatesGroup):
     text = State(); when = State()
