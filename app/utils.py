@@ -15,12 +15,12 @@ from app.emoji import (
     BOLT,
     CAL,
     CLOCK,
+    GIFT,
     HOURGLASS,
     PEOPLE,
     PENCIL,
     PLUS,
     REPEAT,
-    SUN,
     WARN,
 )
 
@@ -41,6 +41,7 @@ MENU_KEYWORDS = (
     "Eslatmalarim",
     "Takroriy eslatma",
     "Do'stga eslatma",
+    "Do'st taklif qilish",
     "Sozlamalar",
     "Bekor qilish",
 )
@@ -54,13 +55,14 @@ HELP_TEXT = (
     "<code>har 3 kunda 9:00 dori</code>\n"
     "Soat: <code>9</code>, <code>9 00</code>, <code>9:30</code>, "
     "<code>soat 9 da</code>\n\n"
-    f"{PLUS} <b>Eslatma yaratish</b>: matn, sana, soat va minut tugmalar bilan\n"
+    f"{PLUS} <b>Eslatma yaratish</b>: matn, sana, soat va minutni tugmalar bilan tanlaysiz\n"
     f"{REPEAT} <b>Takroriy</b>: har kuni, hafta kunlari, har oy, har N kunda\n"
-    f"{PEOPLE} <b>Do'stga eslatma</b>: havola orqali boshqaga yuborasiz\n"
+    f"{PEOPLE} <b>Do'stga eslatma</b>: do'stingizga havola yuborasiz, eslatma uning "
+    "telefoniga o'rnatiladi. U \"Bajarildi\" bossa, sizga xabar keladi\n"
+    f"{GIFT} <b>Do'st taklif qilish</b>: do'stingiz qo'shilsa, eslatma limitingiz oshadi\n"
     f"{PENCIL} <b>Eslatmalarim</b>: ko'rish, tahrirlash, o'chirish\n\n"
-    f"{BELL} Eslatma kelganda: 5, 10, 15 daqiqa, 1 soat yoki ertaga qayta eslatish\n"
-    f"{HOURGLASS} Sozlamalarda: oldindan ogohlantirish\n"
-    f"{SUN} Sozlamalarda: ertalabki bugungi ro'yxat\n\n"
+    f"{BELL} Eslatma kelganda: 5, 10, 15 daqiqa, 1 soat yoki ertaga qayta eslatish mumkin\n"
+    f"{HOURGLASS} Sozlamalarda: eslatmadan oldin ogohlantirish\n\n"
     f"{CLOCK} Vaqt O'zbekiston vaqti bo'yicha. Bekor qilish: /cancel"
 )
 

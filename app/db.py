@@ -151,10 +151,13 @@ class Database:
         data, _ = await self._request("GET", "users", params={"select": "*", "telegram_id": f"eq.{user_id}", "limit": "1"}, retries=1)
         return data[0] if data else None
 
-    async def register_user(self, user_id: int, full_name: str, username: Optional[str], phone: str):
+    async def register_user(self, user_id: int, full_name: str, username: Optional[str], phone: str,
+                            referred_by: Optional[int] = None):
         body = {"telegram_id": user_id, "full_name": full_name, "username": username, "phone": phone,
                 "consent": True, "consent_at": iso_z(datetime.now(timezone.utc)),
                 "last_seen_at": iso_z(datetime.now(timezone.utc))}
+        if referred_by:
+            body["referred_by"] = referred_by
         await self._request("POST", "users", params={"on_conflict": "telegram_id"}, body=body,
                             prefer="resolution=merge-duplicates,return=minimal", retries=1)
 
@@ -198,33 +201,34 @@ class Database:
 
     async def users_with_pre(self) -> list:
         """Oldindan ogohlantirish yoqilgan foydalanuvchilar."""
-        data, _ = await self._request(
-            "GET",
-            "users",
-            params={
-                "select": "telegram_id,pre_minutes",
-                "pre_minutes": "gt.0",
-                "is_blocked": "eq.false",
-                "limit": "5000",
-            },
-            retries=1,
-        )
+        try:
+            data, _ = await self._request(
+                "GET",
+                "users",
+                params={
+                    "select": "telegram_id,pre_minutes",
+                    "pre_minutes": "gt.0",
+                    "is_blocked": "eq.false",
+                    "limit": "5000",
+                },
+                retries=1,
+            )
+        except DatabaseError as error:
+            if "pre_minutes" in str(error):
+                logger.error("Bazada pre_minutes ustuni yo'q: supabase_schema.sql ni ishga tushiring")
+                return []
+            raise
         return data or []
 
-    async def users_with_digest(self) -> list:
-        """Ertalabki ro'yxat yoqilgan foydalanuvchilar."""
-        data, _ = await self._request(
-            "GET",
-            "users",
-            params={
-                "select": "telegram_id,digest_hour,last_digest_date",
-                "digest_hour": "not.is.null",
-                "is_blocked": "eq.false",
-                "limit": "5000",
-            },
-            retries=1,
+    async def user_limit(self, user_id: int, base: int) -> int:
+        """Foydalanuvchining eslatma limiti: asosiy + do'st taklif qilib olgan qo'shimcha."""
+        user = await self.get_user(user_id)
+        return base + int((user or {}).get("bonus_limit") or 0)
+
+    async def count_referrals(self, user_id: int) -> int:
+        return await self._count(
+            "users", "telegram_id", {"referred_by": f"eq.{user_id}"}
         )
-        return data or []
 
     # ---------- Eslatmalar ----------
     async def create_reminders(self, rows: list) -> list:
@@ -388,13 +392,26 @@ class Database:
             body = {"status": "done"}
         else:
             body = {"remind_at": iso_z(new_time), "pre_sent": False}
-        data, _ = await self._request(
-            "PATCH",
-            "reminders",
-            params=params,
-            body=body,
-            prefer="return=representation",
-        )
+        try:
+            data, _ = await self._request(
+                "PATCH",
+                "reminders",
+                params=params,
+                body=body,
+                prefer="return=representation",
+            )
+        except DatabaseError as error:
+            if "pre_sent" not in str(error):
+                raise
+            # Baza hali yangilanmagan: pre_sent ustunisiz davom etamiz
+            body.pop("pre_sent", None)
+            data, _ = await self._request(
+                "PATCH",
+                "reminders",
+                params=params,
+                body=body,
+                prefer="return=representation",
+            )
         return bool(data)
 
     async def revert(

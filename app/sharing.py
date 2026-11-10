@@ -16,7 +16,17 @@ from app.utils import esc, fmt_dt, now_utc
 logger = logging.getLogger(__name__)
 
 GIFT_PREFIX = "g_"
+REF_PREFIX = "ref_"
 MAX_OPEN_SHARES = 20
+REF_BONUS = 10  # har bir taklif qilingan do'st uchun qo'shimcha limit
+REF_MAX_BONUS = 200
+
+
+def ref_id(args: str | None) -> int | None:
+    """'/start ref_123' dan 123 ni ajratadi (do'st taklif qilish havolasi)."""
+    if args and args.startswith(REF_PREFIX) and args[len(REF_PREFIX):].isdigit():
+        return int(args[len(REF_PREFIX):])
+    return None
 
 
 def gift_token(args: str | None) -> str | None:
@@ -38,8 +48,8 @@ async def send_share_card(
     """Do'st uchun havola yaratib, jo'natuvchiga beradi."""
     if await db.count_open_shares(user.id) >= MAX_OPEN_SHARES:
         await message.answer(
-            f"{WARN} Ishlatilmagan havolalar juda ko'p ({MAX_OPEN_SHARES} ta). "
-            "Avval do'stlaringiz ularni ochishini kuting.",
+            f"{WARN} Do'stlaringiz hali ochmagan havolalar juda ko'p ({MAX_OPEN_SHARES} ta). "
+            "Ular ochgunicha kuting.",
             reply_markup=main_menu(),
         )
         return
@@ -55,18 +65,21 @@ async def send_share_card(
     )
     me = await bot.me()
     link = f"https://t.me/{me.username}?start={GIFT_PREFIX}{token}"
+    when = fmt_dt(remind_at, settings.tz)
     invite = (
-        f"{GIFT} Sizga eslatma tayyorladim. Havolani bosing, "
-        "bot kerakli vaqtda eslatadi:"
+        f"{GIFT} {user.full_name} sizga eslatma yubordi:\n"
+        f"{MEMO} {text[:150]}\n{CAL} {when}\n\n"
+        "Qabul qilish uchun bosing:"
     )
     share_url = f"https://t.me/share/url?url={quote(link, safe='')}&text={quote(invite)}"
     await message.answer(
-        f"{PEOPLE} <b>Do'stga eslatma tayyor</b>\n\n"
+        f"{OK} <b>Tayyor!</b>\n\n"
         f"{MEMO} {esc(text)}\n"
-        f"{CAL} {fmt_dt(remind_at, settings.tz)}\n\n"
-        f"{LINK} {link}\n"
-        "Tugmani bosib yuboring. Havola bir kishi uchun ishlaydi.",
-        reply_markup=share_kb(share_url),
+        f"{CAL} {when}\n\n"
+        f"{PEOPLE} Endi pastdagi tugmani bosib, shu eslatmani do'stingizga yuboring. "
+        "U bosib botni ochsa, eslatma uning telefoniga o'rnatiladi. "
+        "U \"Bajarildi\" bossa, sizga xabar keladi.",
+        reply_markup=share_kb(share_url, "Do'stga yuborish"),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
@@ -85,17 +98,19 @@ async def accept_gift(
         return
     if share["from_user"] == user.id:
         await message.answer(
-            f"{PEOPLE} Bu sizning havolangiz. Uni do'stingizga yuboring."
+            f"{PEOPLE} Bu sizning havolangiz. Uni do'stingizga yuboring, "
+            "o'zingizga emas."
         )
         return
     remind_at = parse_ts(share["remind_at"])
     if remind_at <= now_utc():
         await message.answer(f"{WARN} Bu eslatmaning vaqti o'tib ketgan.")
         return
-    if await db.count_active(user.id) >= settings.max_reminders:
+    limit = await db.user_limit(user.id, settings.max_reminders)
+    if await db.count_active(user.id) >= limit:
         await message.answer(
-            f"{WARN} Faol eslatmalaringiz chegaraga yetgan. "
-            "Avval keraksizlarini o'chiring, keyin havolani qayta bosing."
+            f"{WARN} Eslatmalaringiz chegarasiga yetgan. Keraksizlarini o'chirib, "
+            "havolani qayta bosing."
         )
         return
     if not await db.claim_share(token, user.id):
@@ -110,6 +125,7 @@ async def accept_gift(
                     "remind_at": share["remind_at"],
                     "repeat_type": "once",
                     "sender_name": share.get("from_name"),
+                    "sender_id": share["from_user"],
                 }
             ]
         )
@@ -126,15 +142,36 @@ async def accept_gift(
         f"{GIFT} <b>{sender}</b> sizga eslatma yubordi\n\n"
         f"{MEMO} {esc(share['text'])}\n"
         f"{CAL} {fmt_dt(remind_at, settings.tz)}\n\n"
-        f"{OK} Shu vaqtda eslataman. Siz ham do'stingizga yuborishingiz mumkin: "
-        f"\"Do'stga eslatma\" tugmasi.",
+        f"{OK} Qabul qilindi. Shu vaqtda sizga eslataman.",
         reply_markup=main_menu(),
     )
     try:
         await bot.send_message(
             share["from_user"],
-            f"{OK} <b>{esc(user.full_name)}</b> eslatmani qabul qildi:\n"
+            f"{OK} <b>{esc(user.full_name)}</b> eslatmani qabul qildi\n"
             f"{MEMO} {esc(share['text'])}",
         )
     except Exception:
         logger.info("Jo'natuvchiga xabar berib bo'lmadi (id=%s)", share["from_user"])
+
+
+async def reward_referrer(
+    bot: Bot, db: Database, settings: Settings, referrer_id: int, friend: User
+) -> None:
+    """Do'sti qo'shilgan odamga qo'shimcha eslatma limiti beradi."""
+    referrer = await db.get_user(referrer_id)
+    if not referrer:
+        return
+    bonus = int(referrer.get("bonus_limit") or 0)
+    if bonus >= REF_MAX_BONUS:
+        return
+    bonus = min(REF_MAX_BONUS, bonus + REF_BONUS)
+    await db.update_user(referrer_id, {"bonus_limit": bonus})
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"{GIFT} <b>{esc(friend.full_name)}</b> sizning havolangiz orqali qo'shildi!\n"
+            f"{OK} Limitingiz +{REF_BONUS} oshdi: endi {settings.max_reminders + bonus} ta eslatma.",
+        )
+    except Exception:
+        logger.info("Taklif qilganga xabar yuborib bo'lmadi (id=%s)", referrer_id)

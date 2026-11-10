@@ -101,5 +101,8 @@ alter table public.reminders add column if not exists repeat_every integer;
 alter table public.reminders add column if not exists pre_sent boolean not null default false;
 
 alter table public.users add column if not exists pre_minutes integer not null default 0;
-alter table public.users add column if not exists digest_hour smallint;
-alter table public.users add column if not exists last_digest_date date;
+
+-- ===== 4-yangilanish: do'st taklif qilish va "Bajarildi" haqida xabar =====
+alter table public.users add column if not exists bonus_limit integer not null default 0;
+alter table public.users add column if not exists referred_by bigint;
+alter table public.reminders add column if not exists sender_id bigint;

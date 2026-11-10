@@ -10,7 +10,7 @@ eslatmalar yo'qolmaydi.
 """
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import (
@@ -22,7 +22,7 @@ from aiogram.exceptions import (
 from app.alerts import notify_admin
 from app.config import Settings
 from app.db import Database, DatabaseError, parse_ts
-from app.emoji import BELL, CAL, CLOCK, HOURGLASS, MEMO, PEOPLE, REPEAT, SUN
+from app.emoji import BELL, CLOCK, HOURGLASS, MEMO, PEOPLE, REPEAT
 from app.keyboards import reminder_kb
 from app.utils import esc, fmt_dt, next_occurrence, now_utc, row_repeat, short
 
@@ -125,8 +125,6 @@ class _Cache:
     def __init__(self) -> None:
         self.pre: list = []
         self.pre_at = None
-        self.digest: list = []
-        self.digest_at = None
 
 
 def _stale(stamp, now) -> bool:
@@ -167,42 +165,6 @@ async def process_pre_alerts(
         await asyncio.sleep(0.05)
 
 
-async def process_digests(
-    bot: Bot, db: Database, settings: Settings, cache: _Cache
-) -> None:
-    """Har ertalab "Bugungi eslatmalar" ro'yxatini yuboradi."""
-    now = now_utc()
-    if _stale(cache.digest_at, now):
-        cache.digest = await db.users_with_digest()
-        cache.digest_at = now
-    local_now = datetime.now(settings.tz)
-    today = local_now.date().isoformat()
-    day_end = (
-        datetime.combine(local_now.date() + timedelta(days=1), datetime.min.time(), tzinfo=settings.tz)
-    )
-    for user in cache.digest:
-        hour = int(user["digest_hour"])
-        if user.get("last_digest_date") == today:
-            continue
-        if not (hour <= local_now.hour < hour + 6):
-            continue
-        user["last_digest_date"] = today
-        await db.update_user(user["telegram_id"], {"last_digest_date": today})
-        rows = await db.reminders_between(user["telegram_id"], now, day_end)
-        if not rows:
-            continue
-        lines = [f"{SUN} <b>Bugungi eslatmalar</b> ({len(rows)} ta)\n"]
-        for row in rows:
-            when = parse_ts(row["remind_at"]).astimezone(settings.tz).strftime("%H:%M")
-            mark = f" {REPEAT}" if row.get("repeat_type") != "once" else ""
-            lines.append(f"{BELL} <b>{when}</b>  {esc(short(row['text'], 60))}{mark}")
-        try:
-            await bot.send_message(user["telegram_id"], "\n".join(lines))
-        except (TelegramForbiddenError, TelegramBadRequest):
-            pass
-        await asyncio.sleep(0.05)
-
-
 async def run_scheduler(bot: Bot, db: Database, settings: Settings) -> None:
     logger.info("Rejalovchi ishga tushdi (har %s soniyada)", settings.check_interval)
     cache = _Cache()
@@ -217,18 +179,15 @@ async def run_scheduler(bot: Bot, db: Database, settings: Settings) -> None:
             await notify_admin(
                 bot, settings, "Rejalovchida xatolik", repr(error), key="scheduler"
             )
-        for job, name in (
-            (process_pre_alerts, "Oldindan ogohlantirish"),
-            (process_digests, "Ertalabki ro'yxat"),
-        ):
-            try:
-                await job(bot, db, settings, cache)
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                logger.exception("%s ishida xatolik", name)
-                await notify_admin(
-                    bot, settings, f"{name}: xatolik", repr(error), key=name
-                )
+        try:
+            await process_pre_alerts(bot, db, settings, cache)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.exception("Oldindan ogohlantirishda xatolik")
+            await notify_admin(
+                bot, settings, "Oldindan ogohlantirish: xatolik", repr(error),
+                key="pre_alert",
+            )
         if handled < BATCH_SIZE:
             await asyncio.sleep(settings.check_interval)

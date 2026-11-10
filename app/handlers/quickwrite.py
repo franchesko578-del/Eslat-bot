@@ -64,10 +64,11 @@ async def quick_text(
         return
 
     user_id = message.from_user.id
-    if await db.count_active(user_id) >= settings.max_reminders:
+    limit = await db.user_limit(user_id, settings.max_reminders)
+    if await db.count_active(user_id) >= limit:
         await message.answer(
-            f"{WARN} Eslatmalar chegarasiga yetdingiz ({settings.max_reminders} ta). "
-            "Keraksizlarini o'chiring."
+            f"{WARN} Eslatmalar chegarasiga yetdingiz ({limit} ta). "
+            "Keraksizlarini o'chiring yoki do'stlarni taklif qiling."
         )
         return
 
@@ -128,7 +129,8 @@ async def quick_ask(
     if not text:
         await call.answer("Matn topilmadi. Qayta yozing.", show_alert=True)
         return
-    if await db.count_active(call.from_user.id) >= settings.max_reminders:
+    limit = await db.user_limit(call.from_user.id, settings.max_reminders)
+    if await db.count_active(call.from_user.id) >= limit:
         await call.answer("Eslatmalar chegarasiga yetdingiz.", show_alert=True)
         return
     await call.answer()

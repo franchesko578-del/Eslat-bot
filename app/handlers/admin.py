@@ -1,6 +1,7 @@
 """Admin paneli: statistika va hammaga xabar yuborish."""
 import asyncio
 import logging
+import re
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import (
@@ -13,7 +14,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.config import Settings
-from app.db import Database
+from app import subscription
+from app.db import Database, DatabaseError
 from app.emoji import BELL, CAL, CHART, MEGA, OK, STATS, USER, WARN
 from app.keyboards import (
     BLUE,
@@ -242,43 +244,133 @@ async def cb_user_logs(call: CallbackQuery, db: Database):
     await call.message.answer("\n".join(lines)[:4000])
 
 # ---------- Majburiy obuna kanallari ----------
+def _channels_text(rows: list) -> str:
+    if not rows:
+        return (
+            "\U0001F4E2 <b>Majburiy obuna kanallari</b>\n\n"
+            "Hozircha kanal yo'q. Kanal qo'shsangiz, foydalanuvchilar avval "
+            "shu kanalga obuna bo'lishi kerak bo'ladi."
+        )
+    lines = [f"\U0001F4E2 <b>Majburiy obuna kanallari</b> ({len(rows)} ta)\n"]
+    lines += [f"{i}. {esc(r['title'])}" for i, r in enumerate(rows, start=1)]
+    lines.append("\nO'chirish uchun kanal tugmasini bosing.")
+    return "\n".join(lines)
+
+
+def _channels_kb(rows: list):
+    from aiogram.types import InlineKeyboardMarkup
+    buttons = [[btn(f"\U0001F5D1 {r['title']}", f"adm:chdel:{r['id']}", RED)] for r in rows]
+    buttons.append([btn("\u2795 Kanal qo'shish", "adm:chadd", GREEN)])
+    buttons.append([btn("\u2b05\ufe0f Admin panel", "adm:open", BLUE)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.callback_query(F.data == "adm:channels")
 async def cb_channels(call: CallbackQuery, db: Database):
     await call.answer()
     rows = await db.list_channels()
-    from aiogram.types import InlineKeyboardMarkup
-    buttons = [[btn(f"🗑 {r['title']} ({r['chat_id']})", f"adm:chdel:{r['id']}", RED)] for r in rows]
-    buttons.append([btn("➕ Kanal qo'shish", "adm:chadd", GREEN)])
-    buttons.append([btn("⬅️ Admin panel", "adm:open", BLUE)])
-    await call.message.answer("<b>Majburiy obuna kanallari</b>\nKanalni o'chirish uchun uning tugmasini bosing.", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await safe_edit(call, _channels_text(rows), _channels_kb(rows))
+
 
 @router.callback_query(F.data == "adm:chadd")
 async def cb_channel_add(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.set_state(AddChannel.chat_id)
-    await call.message.answer("Kanal ID yoki @username yuboring (masalan: @kanal_nomi).")
+    await call.message.answer(
+        "\u2795 <b>Kanal qo'shish</b>\n\n"
+        "1\ufe0f\u20e3 Botni kanalga <b>administrator</b> qiling\n"
+        "2\ufe0f\u20e3 Kanal manzilini yuboring: <code>@kanal_nomi</code>\n\n"
+        "Yopiq kanal bo'lsa, kanaldan istalgan xabarni shu yerga <b>forward</b> qiling.\n"
+        "Bekor qilish: /cancel"
+    )
 
-@router.message(AddChannel.chat_id, PLAIN)
-async def channel_id(message: Message, state: FSMContext):
-    await state.update_data(chat_id=message.text.strip())
-    await state.set_state(AddChannel.title)
-    await message.answer("Kanal nomini yuboring.")
 
-@router.message(AddChannel.title, PLAIN)
-async def channel_title(message: Message, state: FSMContext):
-    await state.update_data(title=message.text.strip())
-    await state.set_state(AddChannel.invite)
-    await message.answer("Kanalga taklif havolasini yuboring (yoki - yuboring).")
+def parse_channel(text: str):
+    """@nom, t.me/nom havolasi, nom yoki raqamli ID ni tanib oladi."""
+    value = text.strip()
+    match = re.match(r"^(?:https?://)?(?:t|telegram)\.me/([A-Za-z][A-Za-z0-9_]{3,})/?$", value)
+    if match:
+        return "@" + match.group(1)
+    if re.fullmatch(r"@[A-Za-z][A-Za-z0-9_]{3,}", value):
+        return value
+    if re.fullmatch(r"-?\d{5,}", value):
+        return int(value)
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{3,}", value):
+        return "@" + value
+    return None
 
-@router.message(AddChannel.invite, PLAIN)
-async def channel_invite(message: Message, state: FSMContext, db: Database):
-    data = await state.get_data(); await state.clear()
-    link = None if message.text.strip() == "-" else message.text.strip()
-    await db.add_channel(data["chat_id"], data["title"], link)
-    await message.answer("Kanal ro'yxatga qo'shildi. Botni kanalga administrator qilib qo'ying.", reply_markup=admin_kb())
+
+@router.message(AddChannel.chat_id)
+async def channel_resolve(message: Message, state: FSMContext, bot: Bot, db: Database):
+    """Kanalni o'zi topadi: nomi, ID si va havolasini avtomatik oladi."""
+    ident = None
+    origin = getattr(message, "forward_origin", None)
+    if origin is not None and getattr(origin, "type", None) == "channel":
+        ident = origin.chat.id
+    elif message.text:
+        ident = parse_channel(message.text)
+    if ident is None:
+        await message.answer(
+            f"{WARN} Tushunmadim. <code>@kanal_nomi</code> yuboring yoki "
+            "kanaldan bitta xabarni forward qiling."
+        )
+        return
+    try:
+        chat = await bot.get_chat(ident)
+    except TelegramAPIError:
+        await message.answer(
+            f"{WARN} Kanal topilmadi. Manzil to'g'riligini tekshiring.\n"
+            "Yopiq kanal bo'lsa, undan bitta xabarni forward qiling."
+        )
+        return
+    if chat.type not in ("channel", "supergroup", "group"):
+        await message.answer(f"{WARN} Bu kanal yoki guruh emas. Boshqa manzil yuboring.")
+        return
+    me = await bot.me()
+    try:
+        member = await bot.get_chat_member(chat.id, me.id)
+        is_admin = member.status in ("administrator", "creator")
+    except TelegramAPIError:
+        is_admin = False
+    if not is_admin:
+        await message.answer(
+            f"{WARN} Bot <b>{esc(chat.title or '')}</b> kanalida administrator emas.\n\n"
+            "Kanal sozlamalari \u2192 Administratorlar \u2192 botni qo'shing, "
+            "keyin manzilni qayta yuboring."
+        )
+        return
+    link = f"https://t.me/{chat.username}" if chat.username else None
+    if link is None:
+        try:
+            link = (await bot.create_chat_invite_link(chat.id)).invite_link
+        except TelegramAPIError:
+            link = getattr(chat, "invite_link", None)
+    try:
+        await db.add_channel(str(chat.id), chat.title or str(chat.id), link)
+    except DatabaseError as error:
+        text = str(error).lower()
+        if "23505" in text or "duplicate" in text or "409" in text:
+            await message.answer(f"{WARN} Bu kanal allaqachon qo'shilgan.")
+        else:
+            logger.exception("Kanalni saqlab bo'lmadi")
+            await message.answer(f"{WARN} Bazaga saqlab bo'lmadi: {esc(str(error)[:200])}")
+        await state.clear()
+        return
+    subscription.clear_cache()
+    await state.clear()
+    rows = await db.list_channels()
+    await message.answer(
+        f"{OK} Kanal qo'shildi: <b>{esc(chat.title or '')}</b>\n\n"
+        "Endi foydalanuvchilar avval shu kanalga obuna bo'lishi kerak.",
+        reply_markup=main_menu(),
+    )
+    await message.answer(_channels_text(rows), reply_markup=_channels_kb(rows))
+
 
 @router.callback_query(F.data.startswith("adm:chdel:"))
 async def cb_channel_delete(call: CallbackQuery, db: Database):
-    await call.answer()
     await db.remove_channel(int(call.data.split(":")[2]))
-    await call.message.answer("Kanal o'chirildi.", reply_markup=admin_kb())
+    subscription.clear_cache()
+    await call.answer("O'chirildi")
+    rows = await db.list_channels()
+    await safe_edit(call, _channels_text(rows), _channels_kb(rows))

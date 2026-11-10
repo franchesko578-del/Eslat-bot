@@ -2,14 +2,14 @@
 import logging
 from datetime import timedelta
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
 from app.config import Settings
 from app.db import Database, iso_z, parse_ts
-from app.emoji import BELL, OK, SUN
-from app.utils import fmt_dt, now_utc
+from app.emoji import BELL, MEMO, OK
+from app.utils import esc, fmt_dt, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,20 @@ async def _mark(call: CallbackQuery, note: str) -> None:
 
 
 @router.callback_query(F.data.startswith("rm:done:"))
-async def cb_done(call: CallbackQuery) -> None:
+async def cb_done(call: CallbackQuery, bot: Bot, db: Database) -> None:
     await call.answer("Barakalla! \U0001F44F")
     await _mark(call, f"{OK} <b>Bajarildi</b>")
+    # Eslatmani do'sti yuborgan bo'lsa, unga "bajarildi" deb xabar beramiz
+    try:
+        row = await db.get_reminder_any(int(call.data.split(":")[2]), call.from_user.id)
+        if row and row.get("sender_id"):
+            await bot.send_message(
+                row["sender_id"],
+                f"{OK} <b>{esc(call.from_user.full_name)}</b> bajardi\n"
+                f"{MEMO} {esc(row['text'])}",
+            )
+    except Exception:
+        logger.info("Yuboruvchiga 'bajarildi' xabarini yuborib bo'lmadi")
 
 
 async def _reschedule(
@@ -42,7 +53,8 @@ async def _reschedule(
     if row is None:
         await call.answer("Eslatma topilmadi (o'chirilgan bo'lishi mumkin)", show_alert=True)
         return
-    if await db.count_active(call.from_user.id) >= settings.max_reminders:
+    limit = await db.user_limit(call.from_user.id, settings.max_reminders)
+    if await db.count_active(call.from_user.id) >= limit:
         await call.answer("Eslatmalar chegarasiga yetdingiz", show_alert=True)
         return
     when = when_fn(row).replace(second=0, microsecond=0)
@@ -55,6 +67,7 @@ async def _reschedule(
     }
     if row.get("sender_name"):
         new_row["sender_name"] = row["sender_name"]
+        new_row["sender_id"] = row.get("sender_id")
     await db.create_reminders([new_row])
     await call.answer("Qayta eslataman")
     await _mark(call, f"{BELL} Qayta eslataman: <b>{fmt_dt(when, settings.tz)}</b>")

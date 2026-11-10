@@ -61,17 +61,22 @@ async def begin(
     friend: bool = False,
 ) -> None:
     await state.clear()
-    if await db.count_active(message.from_user.id) >= settings.max_reminders:
+    limit = await db.user_limit(message.from_user.id, settings.max_reminders)
+    if await db.count_active(message.from_user.id) >= limit:
         await message.answer(
-            f"{WARN} Eslatmalar chegarasiga yetdingiz ({settings.max_reminders} ta). "
-            "Keraksizlarini o'chiring.",
+            f"{WARN} Eslatmalar chegarasiga yetdingiz ({limit} ta). "
+            "Keraksizlarini o'chiring yoki do'stlarni taklif qilib limitni oshiring.",
             reply_markup=main_menu(),
         )
         return
     await state.set_state(CreateReminder.text)
     await state.update_data(recurring_only=recurring_only, friend=friend)
     prompt = (
-        f"{PEOPLE} Do'stingiz uchun eslatma matnini yozing:"
+        f"{PEOPLE} <b>Do'stga eslatma</b>\n\n"
+        "Siz eslatma yozasiz, men sizga havola beraman. Havolani do'stingizga "
+        "yuborasiz, u bosganda eslatma uning telefoniga o'rnatiladi. "
+        "U \"Bajarildi\" bossa, sizga xabar keladi.\n\n"
+        f"{MEMO} Do'stingiz uchun eslatma matnini yozing:"
         if friend
         else f"{MEMO} Eslatma matnini yozing:"
     )
@@ -412,10 +417,12 @@ async def finish_single(
         await send_share_card(target, bot, db, settings, user, data["text"], remind_at)
         return
 
-    if await db.count_active(user.id) >= settings.max_reminders:
+    if await db.count_active(user.id) >= await db.user_limit(user.id, settings.max_reminders):
         await state.clear()
         await target.answer(
-            f"{WARN} Eslatmalar chegarasiga yetdingiz.", reply_markup=main_menu()
+            f"{WARN} Eslatmalar chegarasiga yetdingiz. Do'stlarni taklif qilib "
+            "limitni oshirishingiz mumkin.",
+            reply_markup=main_menu(),
         )
         return
 
@@ -470,10 +477,9 @@ async def got_custom(
         return
 
     active = await db.count_active(message.from_user.id)
-    if active + len(parsed) > settings.max_reminders:
-        await message.answer(
-            f"{WARN} Chegara {settings.max_reminders} ta, hozir {active} ta bor."
-        )
+    limit = await db.user_limit(message.from_user.id, settings.max_reminders)
+    if active + len(parsed) > limit:
+        await message.answer(f"{WARN} Chegara {limit} ta, hozir {active} ta bor.")
         return
 
     data = await state.get_data()

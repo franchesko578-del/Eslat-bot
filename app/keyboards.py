@@ -21,6 +21,7 @@ from app.emoji import (
     CROSS,
     DAYS,
     GEAR,
+    GIFT,
     HOURGLASS,
     INFO,
     LIST,
@@ -51,6 +52,7 @@ BTN_LIST = f"{LIST} Eslatmalarim"
 BTN_RECURRING = f"{REPEAT} Takroriy eslatma"
 BTN_SETTINGS = f"{GEAR} Sozlamalar"
 BTN_FRIEND = f"{PEOPLE} Do'stga eslatma"
+BTN_INVITE = f"{GIFT} Do'st taklif qilish"
 BTN_CANCEL = f"{CROSS} Bekor qilish"
 
 
@@ -78,8 +80,8 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [reply_btn(BTN_CREATE, GREEN), reply_btn(BTN_LIST, BLUE)],
-            [reply_btn(BTN_RECURRING, BLUE), reply_btn(BTN_FRIEND, GREEN)],
-            [reply_btn(BTN_SETTINGS, BLUE)],
+            [reply_btn(BTN_RECURRING, BLUE), reply_btn(BTN_FRIEND, BLUE)],
+            [reply_btn(BTN_INVITE, GREEN), reply_btn(BTN_SETTINGS, BLUE)],
         ],
         resize_keyboard=True,
     )
@@ -205,8 +207,29 @@ def quick_ask_kb() -> InlineKeyboardMarkup:
     )
 
 
-def share_kb(url: str) -> InlineKeyboardMarkup:
-    return _kb([[url_btn(f"{SEND} Do'stga yuborish", url, GREEN)]])
+def share_kb(url: str, label: str = "Do'stga yuborish") -> InlineKeyboardMarkup:
+    return _kb([[url_btn(f"{SEND} {label}", url, GREEN)]])
+
+
+def subscribe_kb(channels: list) -> InlineKeyboardMarkup:
+    """Majburiy obuna: har kanal uchun tugma va "Tekshirish"."""
+    rows = []
+    for channel in channels:
+        url = channel_url(channel)
+        if url:
+            rows.append([url_btn(f"\U0001F4E2 {channel['title']}", url, BLUE)])
+    rows.append([btn(f"{OK} Obuna bo'ldim, tekshirish", "sub:check", GREEN)])
+    return _kb(rows)
+
+
+def channel_url(channel: dict) -> Optional[str]:
+    link = (channel.get("invite_link") or "").strip()
+    if link.startswith("http"):
+        return link
+    chat_id = str(channel.get("chat_id") or "")
+    if chat_id.startswith("@"):
+        return f"https://t.me/{chat_id[1:]}"
+    return None
 
 
 # ---------- Eslatmalarim ----------
@@ -258,14 +281,9 @@ def pre_label(minutes: int) -> str:
     return "1 soat" if minutes == 60 else f"{minutes} daqiqa"
 
 
-def digest_label(hour: Optional[int]) -> str:
-    return "o'chiq" if hour is None else f"{hour:02d}:00"
-
-
-def settings_kb(is_admin: bool, pre: int = 0, digest: Optional[int] = None):
+def settings_kb(is_admin: bool, pre: int = 0):
     rows = [
-        [btn(f"{HOURGLASS} Oldindan ogohlantirish: {pre_label(pre)}", "set:pre")],
-        [btn(f"{SUN} Ertalabki ro'yxat: {digest_label(digest)}", "set:dg", GREEN)],
+        [btn(f"{HOURGLASS} Oldindan ogohlantirish: {pre_label(pre)}", "set:pre", GREEN)],
         [btn(f"{INFO} Yordam", "set:help")],
         [btn(f"{TRASH} Barcha eslatmalarni o'chirish", "set:delall", RED)],
     ]
@@ -280,19 +298,6 @@ def pre_kb(current: int) -> InlineKeyboardMarkup:
         btn(
             (f"{OK} " if n == current else "") + pre_label(n).capitalize(),
             f"pre:{n}",
-            GREEN if n == current else BLUE,
-        )
-        for n in options
-    ]
-    return _kb([buttons[:3], buttons[3:], [btn(f"{BACK} Orqaga", "set:cancel", RED)]])
-
-
-def digest_kb(current: Optional[int]) -> InlineKeyboardMarkup:
-    options = (None, 6, 7, 8, 9, 10)
-    buttons = [
-        btn(
-            (f"{OK} " if n == current else "") + digest_label(n).capitalize(),
-            f"dg:{'off' if n is None else n}",
             GREEN if n == current else BLUE,
         )
         for n in options
